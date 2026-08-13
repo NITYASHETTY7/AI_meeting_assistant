@@ -52,8 +52,8 @@ Thumbs.db
 .temp/
 .tmp/
 
-# ── references/openwhisper: locally-downloaded runtime/build artifacts,
-#    not part of its source (the rest of its own .gitignore already covers
-#    node_modules/ and resources/bin/, but this one is a local Node
-#    install that isn't excluded anywhere else) ──────────────────────────
-references/openwhisper/.node22/
+# ── references/openwhisper: kept locally for study/reference only, never
+#    committed to this repo. It's a full third-party project with its own
+#    git history, node_modules, and downloaded build artifacts — none of
+#    that belongs in this repo, but the folder itself stays on disk. ────────
+references/openwhisper/
