@@ -1,0 +1,6 @@
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  keytar: true
+minimumReleaseAgeExclude:
+  - '@rolldown/binding-android-arm64@1.2.2'

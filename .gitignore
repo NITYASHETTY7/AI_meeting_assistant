@@ -1,0 +1,59 @@
+# ── Dependencies ──────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Build output ─────────────────────────────────────────────────────────
+dist/
+dist-electron/
+dist-ssr/
+build/
+out/
+release/
+
+# ── Environment & secrets ────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# ── Local database & user data (contains real transcripts/recordings) ───
+app/database/*.db
+app/database/*.db-*
+app/database/granola.db*
+app/recordings/
+app/app-config.json
+
+# ── Logs ──────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Editor / OS ───────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Misc ──────────────────────────────────────────────────────────────────
+*.local
+.cache/
+.temp/
+.tmp/
+
+# ── references/openwhisper: locally-downloaded runtime/build artifacts,
+#    not part of its source (the rest of its own .gitignore already covers
+#    node_modules/ and resources/bin/, but this one is a local Node
+#    install that isn't excluded anywhere else) ──────────────────────────
+references/openwhisper/.node22/

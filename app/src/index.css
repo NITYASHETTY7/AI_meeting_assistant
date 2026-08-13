@@ -1,0 +1,435 @@
+@import "tailwindcss";
+
+@variant dark (.dark &);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MIRAI GRANOLA — DESIGN SYSTEM
+   
+   Premium enterprise design language for an AI meeting assistant.
+   
+   Palette:
+     Primary Background  #171818
+     Primary Surface     #1F2022
+     Secondary Surface   #27292C
+     Elevated Cards      #303236
+     Border              rgba(255,255,255,0.08)
+   
+   Accent: #3B9FD8 (cyan-blue) — used sparingly.
+   Success / Warning / Error stay their own colors — never accent-colored.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Light Theme ─────────────────────────────────────────────────────────── */
+
+  /* Backgrounds */
+  --bg-app:         #F4F5F7;
+  --bg-surface:     #FFFFFF;
+  --bg-surface-2:   #F0F1F3;
+  --bg-card:        #FFFFFF;
+  --bg-hover:       #EAEBEE;
+  --bg-input:       #FFFFFF;
+  --bg-input-hover: #F4F5F7;
+  --bg-sidebar:     #FFFFFF;
+  --bg-header:      #FFFFFF;
+
+  /* Borders */
+  --border:         rgba(0, 0, 0, 0.08);
+  --border-strong:  rgba(0, 0, 0, 0.13);
+  --border-subtle:  rgba(0, 0, 0, 0.05);
+  --divide:         rgba(0, 0, 0, 0.06);
+
+  /* Text */
+  --text-primary:   #111214;
+  --text-secondary: #3D4148;
+  --text-tertiary:  #70757F;
+  --text-muted:     #9CA3AF;
+  --text-disabled:  #C4C9D4;
+  --text-inverse:   #FFFFFF;
+
+  /* Accent — Cyan-Blue */
+  --accent:         #3B9FD8;
+  --accent-hover:   #52B0E5;
+  --accent-pressed: #2D82B5;
+  --accent-light:   #6BC3EE;
+  --accent-subtle:  rgba(59, 159, 216, 0.08);
+  --accent-border:  rgba(59, 159, 216, 0.25);
+
+  /* Status — never accent-colored for success/warning/info */
+  --success:        #16A34A;
+  --success-bg:     rgba(22, 163, 74, 0.08);
+  --success-border: rgba(22, 163, 74, 0.20);
+  --warning:        #D97706;
+  --warning-bg:     rgba(217, 119, 6, 0.08);
+  --warning-border: rgba(217, 119, 6, 0.20);
+  --error:          #DC2626;
+  --error-bg:       rgba(220, 38, 38, 0.08);
+  --error-border:   rgba(220, 38, 38, 0.20);
+
+  /* Shadows */
+  --shadow-sm:    0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg:    0 8px 24px rgba(0,0,0,0.09), 0 4px 8px rgba(0,0,0,0.05);
+  --shadow-focus: 0 0 0 3px rgba(59, 159, 216, 0.20);
+
+  /* Brand — cyan-blue gradient */
+  --gradient-brand: linear-gradient(135deg, #3B9FD8 0%, #1E6FA8 100%);
+
+  /* Glassmorphism (light theme) */
+  --glass-bg:       rgba(255, 255, 255, 0.55);
+  --glass-bg-2:     rgba(255, 255, 255, 0.72);
+  --glass-border:   rgba(255, 255, 255, 0.6);
+  --glass-blur:     16px;
+  --glass-shadow:   0 8px 32px rgba(31, 41, 55, 0.10);
+}
+
+.dark {
+  /* ── Dark Theme — premium palette ────────────────────────────────────────── */
+
+  /* Backgrounds — four elevation levels, no pure black */
+  --bg-app:         #171818;   /* outermost: window background         */
+  --bg-surface:     #1F2022;   /* primary panels, sidebar background   */
+  --bg-surface-2:   #27292C;   /* secondary panels, panel bodies       */
+  --bg-card:        #303236;   /* elevated cards, settings rows        */
+  --bg-hover:       #3A3D42;   /* hover state for cards and rows       */
+  --bg-input:       #27292C;   /* input field background               */
+  --bg-input-hover: #303236;   /* input hover/focus background         */
+  --bg-sidebar:     #171818;   /* sidebar — same as bg-app             */
+  --bg-header:      #1F2022;   /* page header strip                    */
+
+  /* Borders — white at very low opacity, never harsh */
+  --border:         rgba(255, 255, 255, 0.08);
+  --border-strong:  rgba(255, 255, 255, 0.13);
+  --border-subtle:  rgba(255, 255, 255, 0.04);
+  --divide:         rgba(255, 255, 255, 0.06);
+
+  /* Text */
+  --text-primary:   #F4F5F7;
+  --text-secondary: #A3A8B3;
+  --text-tertiary:  #7A808B;
+  --text-muted:     #555B65;
+  --text-disabled:  #3A3F47;
+  --text-inverse:   #111214;
+
+  /* Accent — Cyan-Blue (same hue in both themes) */
+  --accent:         #3FB0EB;
+  --accent-hover:   #5FC1F0;
+  --accent-pressed: #2E8CC0;
+  --accent-light:   #7CCBF3;
+  --accent-subtle:  rgba(63, 176, 235, 0.14);
+  --accent-border:  rgba(63, 176, 235, 0.32);
+
+  /* Status */
+  --success:        #22C55E;
+  --success-bg:     rgba(34, 197, 94, 0.10);
+  --success-border: rgba(34, 197, 94, 0.20);
+  --warning:        #F59E0B;
+  --warning-bg:     rgba(245, 158, 11, 0.10);
+  --warning-border: rgba(245, 158, 11, 0.20);
+  --error:          #EF4444;
+  --error-bg:       rgba(239, 68, 68, 0.10);
+  --error-border:   rgba(239, 68, 68, 0.20);
+
+  /* Shadows — subtle in dark mode, mainly for separation */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.35);
+  --shadow-md:    0 4px 16px rgba(0,0,0,0.45);
+  --shadow-lg:    0 8px 32px rgba(0,0,0,0.55);
+  --shadow-focus: 0 0 0 3px rgba(63, 176, 235, 0.30);
+
+  /* Brand gradient */
+  --gradient-brand: linear-gradient(135deg, #3FB0EB 0%, #1C6E99 100%);
+
+  /* Glassmorphism (dark theme) */
+  --glass-bg:       rgba(31, 32, 34, 0.55);
+  --glass-bg-2:     rgba(39, 41, 44, 0.72);
+  --glass-border:   rgba(255, 255, 255, 0.10);
+  --glass-blur:     16px;
+  --glass-shadow:   0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ── Base reset ──────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: 'Inter', 'Outfit', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--border-strong); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── App layout semantic classes ─────────────────────────────────────────── */
+
+.mg-app       { background: var(--bg-app); }
+.mg-surface   { background: var(--bg-surface); }
+.mg-surface-2 { background: var(--bg-surface-2); }
+.mg-card      {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+.mg-sidebar   { background: var(--bg-sidebar); border-right: 1px solid var(--border); }
+.mg-header    { background: var(--bg-header); border-bottom: 1px solid var(--border); }
+.mg-border    { border-color: var(--border); }
+.mg-divide    { border-color: var(--divide); }
+
+/* Generic hover-lift — subtle raise + accent-tinted border/shadow on hover,
+   for clickable cards (meeting cards, list items, etc). */
+.mg-hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+}
+.mg-hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent-border);
+}
+
+/* Text utilities */
+.mg-text-1     { color: var(--text-primary); }
+.mg-text-2     { color: var(--text-secondary); }
+.mg-text-3     { color: var(--text-tertiary); }
+.mg-text-muted { color: var(--text-muted); }
+
+/* ── Button base ─────────────────────────────────────────────────────────── */
+
+.mg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+  border: 1px solid transparent;
+  line-height: 1;
+  text-decoration: none;
+  outline: none;
+}
+
+.mg-btn:active            { transform: scale(0.97); }
+.mg-btn:focus-visible     { box-shadow: var(--shadow-focus); }
+.mg-btn:disabled          { opacity: 0.40; cursor: not-allowed; transform: none; }
+
+/* Primary — Cyan-Blue */
+.mg-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 1px 4px rgba(59, 159, 216, 0.30);
+}
+.mg-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 2px 10px rgba(59, 159, 216, 0.40);
+}
+.mg-btn-primary:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
+
+/* Secondary */
+.mg-btn-secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.mg-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Ghost */
+.mg-btn-ghost {
+  background: transparent;
+  color: var(--text-tertiary);
+  border-color: var(--border);
+}
+.mg-btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+/* Danger — uses error palette, not accent */
+.mg-btn-danger {
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: var(--error-border);
+}
+.mg-btn-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: var(--error);
+}
+
+/* ── Input base ──────────────────────────────────────────────────────────── */
+
+.mg-input {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 7px 12px;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+  width: 100%;
+}
+
+.mg-input::placeholder       { color: var(--text-muted); }
+.mg-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-input-hover);
+}
+.mg-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+  background: var(--bg-input-hover);
+}
+.mg-input:disabled            { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Select element (mirrors mg-input) ────────────────────────────────────── */
+select.mg-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237A808B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* ── Panel / card ────────────────────────────────────────────────────────── */
+
+.mg-panel {
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.mg-panel-header {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+}
+
+/* ── Glassmorphism ───────────────────────────────────────────────────────────
+   Frosted-glass surfaces: translucent background + backdrop blur + a subtle
+   light border to catch the edge. Used for floating/overlay surfaces
+   (notifications, popovers, modals) and optionally for elevated panels that
+   should feel "lifted" above the app background rather than flat.
+   Falls back gracefully — backdrop-filter is widely supported in Electron's
+   Chromium runtime, but the translucent background still reads fine without it.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.mg-glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.mg-glass-card {
+  background: var(--glass-bg-2);
+  backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+/* Subtle lift-on-hover for glass cards — meeting cards, panels, etc. */
+.mg-glass-hover:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--glass-shadow), 0 0 0 1px var(--accent-border);
+  transform: translateY(-1px);
+}
+
+/* Glass variant for the sidebar — slightly less blur so nav text stays crisp */
+.mg-glass-sidebar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border-right: 1px solid var(--glass-border);
+}
+
+/* ── Status chips ────────────────────────────────────────────────────────── */
+
+.mg-chip-success {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+.mg-chip-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+.mg-chip-error {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error-border);
+}
+.mg-chip-accent {
+  background: var(--accent-subtle);
+  color: var(--accent-light);
+  border: 1px solid var(--accent-border);
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes mg-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mg-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mg-scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.mg-animate-fade  { animation: mg-fade-in 0.2s ease forwards; }
+.mg-animate-slide { animation: mg-slide-up 0.25s ease forwards; }
+.mg-animate-scale { animation: mg-scale-in 0.2s ease forwards; }
+
+/* ── Text selection ──────────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
