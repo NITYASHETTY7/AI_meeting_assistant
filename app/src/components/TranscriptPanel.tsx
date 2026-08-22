@@ -164,7 +164,7 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
     setTranslatingIdx(originalIdx);
     try {
       const langLabel = TRANSLATION_LANGUAGES.find((l) => l.code === langCode)?.label ?? langCode;
-      const provider = ProviderManager.getActiveProvider();
+      const provider = ProviderManager.getChatProvider();
 
       const reply = await provider.chat([
         {
@@ -191,32 +191,6 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
   useEffect(() => {
     scrollToBottom();
   }, [meeting.id, scrollToBottom]);
-
-  // ── Speaker colour palette ──────────────────────────────────────────────────
-  const SPEAKER_COLOURS = [
-    'var(--accent)',
-    '#22C55E',
-    '#F59E0B',
-    '#EF4444',
-    '#06B6D4',
-    '#8B5CF6',
-    '#F97316',
-    '#14B8A6',
-  ];
-
-  const speakerColourMap = useRef(new Map<string, string>());
-  const getColourForSpeaker = (speaker: string): string => {
-    if (!speakerColourMap.current.has(speaker)) {
-      const idx = speakerColourMap.current.size % SPEAKER_COLOURS.length;
-      speakerColourMap.current.set(speaker, SPEAKER_COLOURS[idx]);
-    }
-    return speakerColourMap.current.get(speaker)!;
-  };
-
-  // Reset colour map when meeting changes
-  useEffect(() => {
-    speakerColourMap.current.clear();
-  }, [meeting.id]);
 
   // ── Search filtering ────────────────────────────────────────────────────────
   // Attach the original index (for translation lookup) and resolved display
@@ -384,11 +358,7 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
           </div>
         ) : (
           filteredLines.map((line, idx) => {
-            const speakerColour = getColourForSpeaker(line.speaker);
-            const prevLine = filteredLines[idx - 1];
-            const isContinuation = prevLine?.speaker === line.speaker;
-            // Alternate row backgrounds for readability
-            const isEven = idx % 2 === 0;
+            const isYou = line.speaker.toLowerCase() === 'you';
             const lineTranslation = lineTranslations.get(line.originalIdx);
             const isPickerOpen = activeLangPickerIdx === line.originalIdx;
             const isThisLineTranslating = translatingIdx === line.originalIdx;
@@ -396,113 +366,128 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
             return (
               <div
                 key={idx}
-                className={`group relative flex gap-3 items-start rounded-lg px-3 ${isContinuation ? 'pt-1 pb-1' : 'pt-3 pb-2'}`}
-                style={{
-                  background: isEven ? 'transparent' : 'var(--bg-card)',
-                }}
+                className={`group relative flex w-full my-2 ${isYou ? 'justify-end' : 'justify-start'}`}
               >
-                <span
-                  className="shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded mt-0.5 select-none min-w-[38px] text-center"
+                <div
+                  className={`relative max-w-[82%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm transition-all ${
+                    isYou
+                      ? 'rounded-tr-xs text-left'
+                      : 'rounded-tl-xs text-left'
+                  }`}
                   style={{
-                    background: 'var(--bg-hover)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--border)',
+                    background: isYou ? 'rgba(59, 130, 246, 0.12)' : 'var(--speaker-other-bg)',
+                    border: isYou
+                      ? '1px solid rgba(96, 165, 250, 0.28)'
+                      : '1px solid var(--speaker-other-border)',
                   }}
                 >
-                  {line.time}
-                </span>
-                <div className="flex-1 min-w-0">
-                  {!isContinuation && (
-                    <p
-                      className="text-xs font-bold mb-1"
-                      style={{ color: speakerColour }}
+                  {/* Speaker & Timestamp header strip */}
+                  <div className="flex items-center justify-between gap-4 mb-1.5 select-none">
+                    <span
+                      className="text-[10px] font-bold tracking-wide"
+                      style={{ color: isYou ? 'var(--accent)' : 'var(--speaker-other)' }}
                     >
-                      {line.speaker}
-                    </p>
-                  )}
+                      {isYou ? 'You' : (line.speaker && line.speaker !== 'Speaker' ? line.speaker : 'Others')}
+                    </span>
+                    <span
+                      className="font-mono text-[9px] px-1.5 py-0.5 rounded"
+                      style={{
+                        background: isYou ? 'rgba(59, 130, 246, 0.18)' : 'var(--speaker-other-badge-bg)',
+                        color: isYou ? '#93C5FD' : 'var(--speaker-other)',
+                      }}
+                    >
+                      {line.time}
+                    </span>
+                  </div>
+
+                  {/* Transcript Content */}
                   <p
                     className="text-sm leading-relaxed break-words"
-                    style={{ color: 'var(--text-secondary)' }}
+                    style={{ color: 'var(--text-primary)' }}
                   >
                     {highlight(line.displayText)}
                   </p>
+
+                  {/* Per-line Translation notice */}
                   {lineTranslation && (
                     <p
-                      className="text-[10px] font-semibold mt-1 flex items-center gap-1"
+                      className="text-[10px] font-semibold mt-1.5 flex items-center gap-1"
                       style={{ color: 'var(--accent)' }}
                     >
                       <Globe className="w-2.5 h-2.5" />
                       Translated to {TRANSLATION_LANGUAGES.find((l) => l.code === lineTranslation.lang)?.label}
                     </p>
                   )}
-                </div>
 
-                {/* Per-line translate icon — hidden until hover/active, scoped
-                    to this single line only (not a global toolbar button). */}
-                <div className="relative shrink-0">
-                  <button
-                    onClick={() => setActiveLangPickerIdx(isPickerOpen ? null : line.originalIdx)}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-opacity ${
-                      isPickerOpen || lineTranslation ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}
-                    style={{
-                      color: lineTranslation ? 'var(--accent)' : 'var(--text-muted)',
-                      background: lineTranslation ? 'var(--accent-subtle)' : 'transparent',
-                    }}
-                    title="Translate this line"
-                  >
-                    {isThisLineTranslating ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Globe className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-
-                  {isPickerOpen && (
-                    <div
-                      ref={langPickerRef}
-                      className="absolute right-0 top-full mt-1 w-40 rounded-lg overflow-hidden z-50 max-h-56 overflow-y-auto"
+                  {/* Per-line translate trigger floating button */}
+                  <div className={`absolute top-2 ${isYou ? '-left-8' : '-right-8'}`}>
+                    <button
+                      onClick={() => setActiveLangPickerIdx(isPickerOpen ? null : line.originalIdx)}
+                      className={`p-1.5 rounded-lg cursor-pointer transition-opacity ${
+                        isPickerOpen || lineTranslation ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
                       style={{
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-strong)',
-                        boxShadow: 'var(--shadow-lg)',
+                        color: lineTranslation ? 'var(--accent)' : 'var(--text-muted)',
+                        background: lineTranslation ? 'var(--accent-subtle)' : 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
                       }}
+                      title="Translate this line"
                     >
-                      {lineTranslation && (
-                        <>
-                          <button
-                            onClick={() => handleTranslateLine(line.originalIdx, 'original')}
-                            className="w-full text-left px-3 py-2 text-xs font-semibold cursor-pointer transition-colors"
-                            style={{ color: 'var(--text-secondary)' }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            Show original
-                          </button>
-                          <div style={{ borderTop: '1px solid var(--border)' }} />
-                        </>
+                      {isThisLineTranslating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Globe className="w-3.5 h-3.5" />
                       )}
-                      {TRANSLATION_LANGUAGES.map((lang) => (
-                        <button
-                          key={lang.code}
-                          onClick={() => handleTranslateLine(line.originalIdx, lang.code)}
-                          className="w-full text-left px-3 py-2 text-xs font-medium cursor-pointer transition-colors"
-                          style={{
-                            color: lineTranslation?.lang === lang.code ? 'var(--accent)' : 'var(--text-secondary)',
-                            background: lineTranslation?.lang === lang.code ? 'var(--accent-subtle)' : 'transparent',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (lineTranslation?.lang !== lang.code) e.currentTarget.style.background = 'var(--bg-hover)';
-                          }}
-                          onMouseLeave={(e) => {
-                            if (lineTranslation?.lang !== lang.code) e.currentTarget.style.background = 'transparent';
-                          }}
-                        >
-                          {lang.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    </button>
+
+                    {isPickerOpen && (
+                      <div
+                        ref={langPickerRef}
+                        className={`absolute top-full mt-1 w-40 rounded-lg overflow-hidden z-50 max-h-56 overflow-y-auto ${
+                          isYou ? 'right-0' : 'left-0'
+                        }`}
+                        style={{
+                          background: 'var(--bg-card)',
+                          border: '1px solid var(--border-strong)',
+                          boxShadow: 'var(--shadow-lg)',
+                        }}
+                      >
+                        {lineTranslation && (
+                          <>
+                            <button
+                              onClick={() => handleTranslateLine(line.originalIdx, 'original')}
+                              className="w-full text-left px-3 py-2 text-xs font-semibold cursor-pointer transition-colors"
+                              style={{ color: 'var(--text-secondary)' }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              Show original
+                            </button>
+                            <div style={{ borderTop: '1px solid var(--border)' }} />
+                          </>
+                        )}
+                        {TRANSLATION_LANGUAGES.map((lang) => (
+                          <button
+                            key={lang.code}
+                            onClick={() => handleTranslateLine(line.originalIdx, lang.code)}
+                            className="w-full text-left px-3 py-2 text-xs font-medium cursor-pointer transition-colors"
+                            style={{
+                              color: lineTranslation?.lang === lang.code ? 'var(--accent)' : 'var(--text-secondary)',
+                              background: lineTranslation?.lang === lang.code ? 'var(--accent-subtle)' : 'transparent',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (lineTranslation?.lang !== lang.code) e.currentTarget.style.background = 'var(--bg-hover)';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (lineTranslation?.lang !== lang.code) e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            {lang.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );

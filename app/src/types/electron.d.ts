@@ -22,6 +22,11 @@ export interface IElectronAPI {
    */
   showNativeNotification: (options: { title: string; body: string }) => Promise<{ ok: boolean; error?: string }>;
 
+  // ── Desktop Audio & Startup ──────────────────────────────────────────────────
+  getDesktopSources: () => Promise<{ id: string; name: string }[]>;
+  setOpenAtLogin: (openAtLogin: boolean) => Promise<{ ok: boolean; error?: string }>;
+  getOpenAtLogin: () => Promise<{ ok: boolean; openAtLogin: boolean; error?: string }>;
+
   // ── OS Credential Store (keytar) ───────────────────────────────────────────
   /**
    * Save (or overwrite) an API key for the given provider in the OS keychain.
@@ -49,7 +54,14 @@ export interface IElectronAPI {
   // ── Database: Meetings ───────────────────────────────────────────────────────
   dbListMeetings: () => Promise<{ ok: boolean; meetings: MeetingDTO[]; error?: string }>;
   dbUpsertMeeting: (meeting: MeetingUpsertInput) => Promise<{ ok: boolean; error?: string }>;
+  /** Moves a meeting to the Bin (soft delete) — see dbPermanentlyDeleteMeeting for the real erase. */
   dbDeleteMeeting: (meetingId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Lists meetings currently in the Bin. */
+  dbListDeletedMeetings: () => Promise<{ ok: boolean; meetings: MeetingDTO[]; error?: string }>;
+  /** Restores a meeting from the Bin back to the active list. */
+  dbRestoreMeeting: (meetingId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Permanently erases a meeting and all related data. Cannot be undone. */
+  dbPermanentlyDeleteMeeting: (meetingId: string) => Promise<{ ok: boolean; error?: string }>;
   dbAppendTranscriptLine: (
     meetingId: string,
     line: { time: string; speaker: string; text: string }
@@ -85,10 +97,13 @@ export interface MeetingDTO {
   timeline: { start: number; end: number; label: string }[];
   aiNotes: string;
   aiSummary: string;
+  additionalNotes: string;
   recordingFilePath: string | null;
   source: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Unix ms timestamp of when this meeting was moved to the Bin, or null if active. */
+  deletedAt: number | null;
   transcript: { time: string; speaker: string; text: string }[];
   actionItems: { id: string; text: string; done: boolean }[];
 }
@@ -104,6 +119,7 @@ export interface MeetingUpsertInput {
   timeline: { start: number; end: number; label: string }[];
   aiNotes: string;
   aiSummary: string;
+  additionalNotes?: string;
   recordingFilePath?: string | null;
   source?: string | null;
 }

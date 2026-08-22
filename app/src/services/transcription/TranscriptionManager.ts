@@ -1,6 +1,6 @@
 import { useAppStore } from '../../store/useAppStore';
 import { ProviderManager } from '../ai/ProviderManager';
-import type { TranscriptEvent, DiarizedUtterance } from '../ai/AIProvider';
+import type { TranscriptEvent, DiarizedUtterance, SpeakerTrack } from '../ai/AIProvider';
 
 /**
  * TranscriptionManager — the single owner of all transcription lifecycle.
@@ -19,13 +19,16 @@ import type { TranscriptEvent, DiarizedUtterance } from '../ai/AIProvider';
  *    Chunks → LiveTranscriptionEngine → WAV batch → Whisper API → TranscriptEvent
  *    Transcript lines appear during recording.
  *
- *  POST-RECORDING (AssemblyAI)
+ *  POST-RECORDING (AssemblyAI, Deepgram, Gemini)
  *    No live transcript during recording.
- *    After stop(wavBlob): the full WAV is uploaded to AssemblyAI and transcribed.
+ *    After stop(wavBlob): the full WAV is uploaded and transcribed in one batch call.
  *    Resulting lines are appended to the meeting after processing completes.
  *    The recording NEVER fails because this is entirely post-recording.
+ *    Gemini transcribes via generateContent with inline audio data — real
+ *    transcription, not live/streaming (that would require Gemini's separate
+ *    Live API, which this app does not integrate with).
  *
- *  NO-OP (non-STT providers: Gemini, Anthropic, AWS, OpenRouter, Ollama, Custom)
+ *  NO-OP (non-STT providers: Anthropic, AWS, OpenRouter, Ollama, Custom)
  *    No transcription at all. Recording continues cleanly.
  *    The user can still generate a summary from whatever notes exist.
  *
@@ -33,6 +36,17 @@ import type { TranscriptEvent, DiarizedUtterance } from '../ai/AIProvider';
  *   Each segment is tracked by segmentId. Duplicate events (same segmentId or
  *   identical text+timestamp within the same batch) are silently dropped.
  */
+
+/**
+ * Providers whose speech_to_text capability is real but batch/post-recording
+ * only — no live streaming during the call. TranscriptionManager skips the
+ * live-batching engine entirely for these and instead uploads the full WAV
+ * in stop(). Exported so Settings can show an accurate capability message
+ * right after a successful connection test, instead of a generic "Connected"
+ * that doesn't tell the user when to expect their transcript.
+ */
+export const POST_RECORDING_ONLY_PROVIDERS = ['AssemblyAI', 'Deepgram', 'Gemini'];
+
 export class TranscriptionManager {
   private static startTime = 0;
   private static isPaused = false;
@@ -67,10 +81,10 @@ export class TranscriptionManager {
       return;
     }
 
-    // AssemblyAI / Deepgram: capabilities.speech_to_text = true but live mode
-    // is post-recording only. Their startLiveTranscription() is a no-op. We
-    // skip the engine startup and will upload the full WAV in stop().
-    if (store.provider === 'AssemblyAI' || store.provider === 'Deepgram') {
+    // Post-recording-only providers: capabilities.speech_to_text = true but
+    // live mode is batch-after-stop. Their startLiveTranscription() is a
+    // no-op. We skip the engine startup and will upload the full WAV in stop().
+    if (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider)) {
       store.setTranscriptionStatus('idle');
       store.setStreamState('disconnected');
       console.info(`[TranscriptionManager] ${store.provider}: will transcribe after recording stops.`);
@@ -143,16 +157,16 @@ export class TranscriptionManager {
    * Called on every AudioCapture onaudioprocess event.
    * No-ops gracefully if not running or paused.
    */
-  static async feedChunk(chunk: Float32Array): Promise<void> {
+  static async feedChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack): Promise<void> {
     if (!this.sessionActive || this.isPaused) return;
 
     const store = useAppStore.getState();
     if (!store.capabilities.speech_to_text) return;
-    if (store.provider === 'AssemblyAI' || store.provider === 'Deepgram') return; // post-recording only
+    if (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider)) return; // post-recording only
 
     try {
       const provider = ProviderManager.getActiveProvider();
-      await provider.transcribeAudioChunk(chunk);
+      await provider.transcribeAudioChunk(chunk, speakerTrack);
     } catch {
       // Chunk errors are silently dropped — never propagate to the UI
     }
@@ -181,7 +195,7 @@ export class TranscriptionManager {
     store.setStreamState('disconnected');
     store.setActiveSessionId(null);
 
-    const isPostRecordingOnly = store.provider === 'AssemblyAI' || store.provider === 'Deepgram';
+    const isPostRecordingOnly = POST_RECORDING_ONLY_PROVIDERS.includes(store.provider);
 
     if (store.capabilities.speech_to_text && !isPostRecordingOnly) {
       // Live STT providers: flush the engine's pending batch
@@ -229,16 +243,18 @@ export class TranscriptionManager {
     this.seenSegmentIds = new Set();
   }
 
-  // ── AssemblyAI post-recording flow ──────────────────────────────────────────
+  // ── Post-recording transcription flow ───────────────────────────────────────
 
   /**
-   * Uploads the full WAV to AssemblyAI, polls until the transcript is ready,
-   * then appends all returned words/utterances as transcript lines to the meeting.
+   * Uploads the full WAV to the active provider, polls/awaits until the
+   * transcript is ready, then appends all returned words/utterances as
+   * transcript lines to the meeting.
    *
-   * Used by both AssemblyAI and Deepgram — both are post-recording-only STT
-   * providers in this app (no live per-batch streaming path), and both
-   * expose getLastUtterances() for real speaker-labeled diarization when
-   * available, falling back to sentence-splitting the flat transcript text.
+   * Used by AssemblyAI, Deepgram, and Gemini — all three are post-recording-
+   * only STT providers in this app (no live per-batch streaming path), and
+   * all three expose getLastUtterances() for real speaker-labeled
+   * diarization when available, falling back to sentence-splitting the flat
+   * transcript text.
    *
    * This is non-blocking — called via `void` after recording stops.
    * Status is surfaced via transcriptionStatus in the store.
@@ -274,9 +290,19 @@ export class TranscriptionManager {
       // sentence-splitting the flat text. Utterances carry the actual speaker
       // identity ("Speaker A", "Speaker B", ...) and real timestamps.
       const utterances = provider.getLastUtterances?.() ?? [];
-      const lines = utterances.length > 0
+      const rawLines = utterances.length > 0
         ? this.mapUtterancesToLines(utterances)
         : this.parseAssemblyAITranscript(transcriptText, this.startTime);
+
+      // Post-recording providers (AssemblyAI/Deepgram/Gemini) never pass
+      // through LiveTranscriptionEngine's hallucination filter — that guard
+      // only covers the OpenAI/Groq live-batching path. STT/LLM-based
+      // transcription is well known to occasionally loop on a short phrase
+      // (e.g. "do you", "do you", "do you" at consecutive one-second marks)
+      // when a segment has ambiguous or low-quality audio, so this collapses
+      // runs of identical/near-identical consecutive lines from the SAME
+      // speaker down to a single line before they ever reach the transcript.
+      const lines = this.collapseRepeatedLines(rawLines);
 
       for (const line of lines) {
         useAppStore.getState().appendTranscriptLine(meetingId, line);
@@ -308,6 +334,61 @@ export class TranscriptionManager {
       this.activeMeetingId = null;
       this.seenSegmentIds = new Set();
     }
+  }
+
+  /**
+   * Collapses runs of identical/near-identical consecutive lines from the
+   * SAME speaker, occurring within a few seconds of each other, into a
+   * single line. This is the post-recording-provider equivalent of
+   * LiveTranscriptionEngine's hallucination filter — STT/LLM transcription
+   * occasionally loops on a short phrase for a few seconds when a segment
+   * has ambiguous audio, producing e.g. "do you" / "do you" / "do you"
+   * across consecutive timestamps. Requiring the repeat to fall within a
+   * short time window (not just adjacency in the array) avoids dropping a
+   * speaker legitimately saying the same short word twice minutes apart
+   * later in a real conversation ("Okay" said once early on and again much
+   * later is not a hallucination).
+   */
+  private static readonly REPEAT_COLLAPSE_WINDOW_SEC = 5;
+
+  private static collapseRepeatedLines(
+    lines: { time: string; speaker: string; text: string }[]
+  ): { time: string; speaker: string; text: string }[] {
+    const toSeconds = (time: string): number => {
+      const parts = time.split(':').map((p) => parseInt(p, 10));
+      if (parts.some((p) => Number.isNaN(p))) return 0;
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      return 0;
+    };
+
+    const result: { time: string; speaker: string; text: string }[] = [];
+
+    for (const line of lines) {
+      const prev = result[result.length - 1];
+      const normalized = line.text.trim().toLowerCase();
+      const prevNormalized = prev?.text.trim().toLowerCase();
+      const withinWindow = prev
+        ? Math.abs(toSeconds(line.time) - toSeconds(prev.time)) <= this.REPEAT_COLLAPSE_WINDOW_SEC
+        : false;
+
+      if (
+        prev &&
+        prev.speaker === line.speaker &&
+        normalized === prevNormalized &&
+        normalized.length > 0 &&
+        withinWindow
+      ) {
+        // Duplicate of the immediately preceding line from the same
+        // speaker, within a few seconds — drop it as a likely hallucinated
+        // repeat loop, keeping only the first occurrence's timestamp.
+        continue;
+      }
+
+      result.push(line);
+    }
+
+    return result;
   }
 
   /**

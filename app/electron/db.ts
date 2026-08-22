@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { eq, asc } from 'drizzle-orm'
+import { eq, asc, isNull, isNotNull } from 'drizzle-orm'
 import { join } from 'path'
 import * as schema from '../database/schema/schema'
 
@@ -42,10 +42,12 @@ export interface MeetingDTO {
   timeline: { start: number; end: number; label: string }[]
   aiNotes: string
   aiSummary: string
+  additionalNotes: string
   recordingFilePath: string | null
   source: string | null
   createdAt: number
   updatedAt: number
+  deletedAt: number | null
   transcript: { time: string; speaker: string; text: string }[]
   actionItems: { id: string; text: string; done: boolean }[]
 }
@@ -66,10 +68,12 @@ function rowToMeetingDTO(
     timeline: JSON.parse(row.timeline || '[]'),
     aiNotes: row.aiNotes,
     aiSummary: row.aiSummary,
+    additionalNotes: row.additionalNotes,
     recordingFilePath: row.recordingFilePath ?? null,
     source: row.source ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt ?? null,
     transcript: transcript.map((t) => ({ time: t.time, speaker: t.speaker, text: t.text })),
     actionItems: actionItems.map((a) => ({ id: a.id, text: a.text, done: Boolean(a.done) })),
   }
@@ -77,7 +81,12 @@ function rowToMeetingDTO(
 
 export function listMeetings(): MeetingDTO[] {
   const d = getDb()
-  const meetingRows = d.select().from(schema.meetings).orderBy(asc(schema.meetings.createdAt)).all()
+  const meetingRows = d
+    .select()
+    .from(schema.meetings)
+    .where(isNull(schema.meetings.deletedAt))
+    .orderBy(asc(schema.meetings.createdAt))
+    .all()
   return meetingRows
     .map((row) => {
       const transcript = d
@@ -96,6 +105,33 @@ export function listMeetings(): MeetingDTO[] {
     .sort((a, b) => b.createdAt - a.createdAt)
 }
 
+/** Returns meetings currently in the Bin (deletedAt set), newest-deleted first. */
+export function listDeletedMeetings(): MeetingDTO[] {
+  const d = getDb()
+  const meetingRows = d
+    .select()
+    .from(schema.meetings)
+    .where(isNotNull(schema.meetings.deletedAt))
+    .orderBy(asc(schema.meetings.createdAt))
+    .all()
+  return meetingRows
+    .map((row) => {
+      const transcript = d
+        .select()
+        .from(schema.transcriptLines)
+        .where(eq(schema.transcriptLines.meetingId, row.id))
+        .orderBy(asc(schema.transcriptLines.sequence))
+        .all()
+      const items = d
+        .select()
+        .from(schema.actionItems)
+        .where(eq(schema.actionItems.meetingId, row.id))
+        .all()
+      return rowToMeetingDTO(row, transcript, items)
+    })
+    .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+}
+
 export function upsertMeeting(meeting: {
   id: string
   title: string
@@ -107,6 +143,7 @@ export function upsertMeeting(meeting: {
   timeline: { start: number; end: number; label: string }[]
   aiNotes: string
   aiSummary: string
+  additionalNotes?: string
   recordingFilePath?: string | null
   source?: string | null
 }) {
@@ -124,6 +161,7 @@ export function upsertMeeting(meeting: {
     timeline: JSON.stringify(meeting.timeline ?? []),
     aiNotes: meeting.aiNotes ?? '',
     aiSummary: meeting.aiSummary ?? '',
+    additionalNotes: meeting.additionalNotes ?? '',
     recordingFilePath: meeting.recordingFilePath ?? null,
     source: meeting.source ?? null,
     updatedAt: now,
@@ -138,7 +176,24 @@ export function upsertMeeting(meeting: {
   }
 }
 
-export function deleteMeeting(meetingId: string) {
+/**
+ * Moves a meeting to the Bin (sets deletedAt) instead of removing it.
+ * Transcript/notes/action items/chat history are left untouched so
+ * restore() brings everything back exactly as it was.
+ */
+export function softDeleteMeeting(meetingId: string) {
+  const d = getDb()
+  d.update(schema.meetings).set({ deletedAt: Date.now() }).where(eq(schema.meetings.id, meetingId)).run()
+}
+
+/** Restores a meeting from the Bin back to the active list. */
+export function restoreMeeting(meetingId: string) {
+  const d = getDb()
+  d.update(schema.meetings).set({ deletedAt: null }).where(eq(schema.meetings.id, meetingId)).run()
+}
+
+/** Permanently erases a meeting and all related rows. Cannot be undone. */
+export function permanentlyDeleteMeeting(meetingId: string) {
   const d = getDb()
   d.delete(schema.transcriptLines).where(eq(schema.transcriptLines.meetingId, meetingId)).run()
   d.delete(schema.actionItems).where(eq(schema.actionItems.meetingId, meetingId)).run()

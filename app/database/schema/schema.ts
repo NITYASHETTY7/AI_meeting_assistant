@@ -28,10 +28,26 @@ export const meetings = sqliteTable('meetings', {
   timeline: text('timeline').notNull().default('[]'),
   aiNotes: text('ai_notes').notNull().default(''),
   aiSummary: text('ai_summary').notNull().default(''),
+  /**
+   * Free-form rich-text notes typed by the user below the transcript card,
+   * independent of the AI-generated aiNotes/aiSummary. Stored as HTML
+   * (from the contentEditable editor) so bold/italic/list formatting
+   * survives reloads. Fed into AI generation alongside the transcript so
+   * summaries/action items/decisions/follow-ups account for anything the
+   * user typed manually during or after the meeting.
+   */
+  additionalNotes: text('additional_notes').notNull().default(''),
   recordingFilePath: text('recording_file_path'),
   source: text('source'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  /**
+   * Unix ms timestamp of when this meeting was moved to the Bin, or null
+   * if it's active. Soft-delete rather than an immediate hard DELETE so
+   * accidental deletions (and their transcript/notes/chat history) can be
+   * restored from the Bin, or permanently erased on purpose later.
+   */
+  deletedAt: integer('deleted_at'),
 });
 
 export const transcriptLines = sqliteTable('transcript_lines', {

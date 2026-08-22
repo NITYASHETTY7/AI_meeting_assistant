@@ -1,4 +1,5 @@
-import type { ProviderConfig, AuthenticationResult, LiveTranscriptionOptions } from '../AIProvider';
+import type { ProviderConfig, AuthenticationResult, LiveTranscriptionOptions, SpeakerTrack } from '../AIProvider';
+import { useAppStore } from '../../../store/useAppStore';
 
 /**
  * BaseOpenAICompatibleProvider
@@ -37,14 +38,37 @@ export abstract class BaseOpenAICompatibleProvider {
   /** Which model ID to suggest as the default */
   protected pickDefaultModel(ids: string[]): string { return ids[0] ?? ''; }
 
+  protected async ensureAuthHeader(): Promise<Record<string, string>> {
+    const providerName = this.getProviderName();
+    let key = this.config?.apiKey || useAppStore.getState().apiKeys[providerName];
+    if (!key && window.electronAPI?.loadCredential) {
+      try {
+        const cred = await window.electronAPI.loadCredential(providerName);
+        if (cred.ok && cred.secret) {
+          key = cred.secret;
+          if (this.config) this.config.apiKey = cred.secret;
+          useAppStore.getState().setApiKeyForProvider(providerName, cred.secret);
+        }
+      } catch { /* ignore */ }
+    }
+    if (!key) {
+      console.error(`[${providerName}] ⚠️ API key is EMPTY — all requests will return 401/404. Go to Settings and save your API key.`);
+    }
+    return {
+      Authorization: `Bearer ${key || ''}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
   // ── Fetch helpers ──────────────────────────────────────────────────────────
 
   /** GET a JSON endpoint, returning the parsed body or throwing with a clean message */
   protected async getJson<T>(path: string): Promise<T> {
+    const authHeaders = await this.ensureAuthHeader();
     const url = `${this.buildBaseUrl()}${path}`;
     const res = await fetch(url, {
       method: 'GET',
-      headers: this.buildHeaders(),
+      headers: authHeaders,
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -55,10 +79,11 @@ export abstract class BaseOpenAICompatibleProvider {
 
   /** POST JSON, returning the parsed body or throwing with a clean message */
   protected async postJson<T>(path: string, body: unknown): Promise<T> {
+    const authHeaders = await this.ensureAuthHeader();
     const url = `${this.buildBaseUrl()}${path}`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { ...this.buildHeaders(), 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -111,62 +136,167 @@ export abstract class BaseOpenAICompatibleProvider {
 
     const messages: Record<number, string> = {
       400: `Bad request — ${apiMessage || 'check your parameters.'}`,
-      401: 'Invalid or expired API key. Please check your credentials.',
-      403: 'Access denied. Your account may not have permission for this resource.',
-      404: 'Endpoint not found. Check your base URL or deployment name.',
-      429: 'Rate limit or quota exceeded. Please wait and try again.',
-      500: 'Provider server error. Try again in a moment.',
-      503: 'Provider is temporarily unavailable. Try again later.',
+      401: `Invalid or expired API key — ${apiMessage || 'check your credentials.'}`,
+      403: `Access denied — ${apiMessage || 'check permissions.'}`,
+      404: `Model or endpoint not found — ${apiMessage || 'check your model name or base URL.'}`,
+      429: `Rate limit or quota exceeded — ${apiMessage || 'please wait and try again.'}`,
+      500: `Provider server error — ${apiMessage || 'try again in a moment.'}`,
+      503: `Provider temporarily unavailable — ${apiMessage || 'try again later.'}`,
     };
 
-    return new Error(messages[status] || `HTTP ${status}: ${apiMessage || 'Unknown error.'}`);
+    const error = new Error(messages[status] || `HTTP ${status}: ${apiMessage || 'Unknown error.'}`);
+
+    // Providers like Groq include the exact wait time in the error message
+    // itself (e.g. "Please try again in 9.8475s") rather than a Retry-After
+    // header. Parsing it lets callers back off for precisely as long as the
+    // provider asked, instead of guessing or failing immediately on a 429
+    // that would have succeeded a few seconds later.
+    if (status === 429) {
+      const retryMatch = apiMessage.match(/try again in\s+([\d.]+)\s*s/i);
+      if (retryMatch) {
+        (error as Error & { retryAfterMs?: number }).retryAfterMs = Math.ceil(parseFloat(retryMatch[1]) * 1000);
+      }
+      (error as Error & { isRateLimit?: boolean }).isRateLimit = true;
+    }
+
+    return error;
   }
 
-  // ── Standard OpenAI /models list ──────────────────────────────────────────
-
   protected async fetchModelList(): Promise<string[]> {
-    const data = await this.getJson<{ data: { id: string }[] }>('/models');
-    const ids = data.data.map((m) => m.id);
-    return this.filterModels(ids);
+    try {
+      const data = await this.getJson<{ data: { id: string }[] }>('/models');
+      const ids = Array.isArray(data?.data) ? data.data.map((m) => m.id).filter(Boolean) : [];
+      const filtered = this.filterModels(ids);
+      if (filtered.length > 0) return filtered;
+    } catch (err) {
+      console.warn(`[${this.getProviderName()}] Failed to fetch model list from /models:`, err);
+    }
+    const fallback = this.filterModels([]);
+    return fallback.length > 0 ? fallback : ['default-model'];
+  }
+
+  protected resolveModel(): string {
+    return this.config?.defaultModel || useAppStore.getState().model || '';
   }
 
   // ── Chat completions ──────────────────────────────────────────────────────
 
   /** Single-turn chat call returning the assistant's reply text */
   async chat(messages: unknown[]): Promise<string> {
-    const model = this.config?.defaultModel;
-    if (!model) throw new Error('No model selected. Please authenticate and choose a model first.');
+    const candidates = [
+      this.resolveModel(),
+      'groq/compound-mini',
+      'groq/compound',
+    ].filter((m): m is string => !!m && !m.includes('gemma') && !m.includes('mixtral') && !m.includes('qwen'));
 
-    const data = await this.postJson<{ choices: { message: { content: string } }[] }>(
-      '/chat/completions',
-      { model, messages, temperature: 0.3 }
-    );
-    return data.choices[0]?.message?.content?.trim() ?? '';
+    const uniqueCandidates = [...new Set(candidates)];
+    let lastError: Error | null = null;
+
+    for (const model of uniqueCandidates) {
+      try {
+        const data = await this.postJson<{ choices: { message: { content: string } }[] }>(
+          '/chat/completions',
+          { model, messages, temperature: 0.3 }
+        );
+        return data.choices?.[0]?.message?.content?.trim() ?? '';
+      } catch (err: unknown) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const msg = lastError.message.toLowerCase();
+        if (
+          msg.includes('404') ||
+          msg.includes('400') ||
+          msg.includes('decommissioned') ||
+          msg.includes('deprecated') ||
+          msg.includes('does not exist') ||
+          msg.includes('access to it') ||
+          msg.includes('not found')
+        ) {
+          console.warn(`[BaseOpenAICompatibleProvider] Model ${model} unavailable/decommissioned, trying fallback candidate...`);
+          continue;
+        }
+        throw lastError;
+      }
+    }
+    throw lastError || new Error('No compatible chat model found on this provider.');
   }
 
   // ── AI extraction helpers (used by all sub-classes) ───────────────────────
 
   private async extractFromTranscript(transcript: string, instruction: string): Promise<string> {
-    const model = this.config?.defaultModel;
-    if (!model) throw new Error('No model selected.');
+    const candidates = [
+      this.resolveModel(),
+      'groq/compound-mini',
+      'groq/compound',
+    ].filter((m): m is string => !!m && !m.includes('gemma') && !m.includes('mixtral') && !m.includes('qwen'));
 
-    const data = await this.postJson<{ choices: { message: { content: string } }[] }>(
-      '/chat/completions',
-      {
-        model,
-        temperature: 0.2,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are an AI assistant that processes meeting transcripts. ' +
-              'Be concise and structured. Only return the requested output — no preamble.',
-          },
-          { role: 'user', content: `${instruction}\n\nTranscript:\n${transcript}` },
-        ],
+    const uniqueCandidates = [...new Set(candidates)];
+    let lastError: Error | null = null;
+    const MAX_RATE_LIMIT_RETRIES = 2;
+
+    for (const model of uniqueCandidates) {
+      let rateLimitRetries = 0;
+
+      while (true) {
+        try {
+          const data = await this.postJson<{ choices: { message: { content: string } }[] }>(
+            '/chat/completions',
+            {
+              model,
+              temperature: 0.2,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are an AI assistant that processes meeting transcripts. ' +
+                    'Be concise and structured. Only return the requested output — no preamble. ' +
+                    'Do not use any markdown syntax: no **bold**, no _italic_, no ## headers, ' +
+                    'no `code` backticks, and no * or + bullet markers. Write plain text only ' +
+                    '— use a hyphen "-" for list items if needed, and plain sentences otherwise.',
+                },
+                { role: 'user', content: `${instruction}\n\nTranscript:\n${transcript}` },
+              ],
+            }
+          );
+          return data.choices?.[0]?.message?.content?.trim() ?? '';
+        } catch (err: unknown) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          const msg = lastError.message.toLowerCase();
+
+          // Several parallel extraction calls (summary/title/action items/decisions/
+          // follow-ups) can collectively exceed a provider's tokens-per-minute limit
+          // even when each individual call is well within it. Rather than failing
+          // the whole generation outright, back off for exactly as long as the
+          // provider asked (or a short default) and retry a couple of times —
+          // this is usually enough for the shared TPM window to reset.
+          const isRateLimit = (lastError as Error & { isRateLimit?: boolean }).isRateLimit;
+          if (isRateLimit && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+            const retryAfterMs = (lastError as Error & { retryAfterMs?: number }).retryAfterMs ?? 3000;
+            rateLimitRetries++;
+            console.warn(
+              `[BaseOpenAICompatibleProvider] Rate limited on ${model}, retrying in ${retryAfterMs}ms ` +
+              `(attempt ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+            continue;
+          }
+
+          if (
+            msg.includes('404') ||
+            msg.includes('400') ||
+            msg.includes('decommissioned') ||
+            msg.includes('deprecated') ||
+            msg.includes('does not exist') ||
+            msg.includes('access to it') ||
+            msg.includes('not found')
+          ) {
+            console.warn(`[BaseOpenAICompatibleProvider] Model ${model} unavailable/decommissioned, trying fallback candidate...`);
+            break;
+          }
+          throw lastError;
+        }
       }
-    );
-    return data.choices[0]?.message?.content?.trim() ?? '';
+    }
+    throw lastError || new Error('Failed to generate extraction from transcript.');
   }
 
   async generateSummary(transcript: string): Promise<string> {
@@ -249,7 +379,7 @@ export abstract class BaseOpenAICompatibleProvider {
     // No-op for providers without live transcription
   }
 
-  async transcribeAudioChunk(_chunk: Float32Array): Promise<void> {
+  async transcribeAudioChunk(_chunk: Float32Array, _speakerTrack?: SpeakerTrack): Promise<void> {
     // No-op for providers without live transcription.
     // Chunks are dropped silently so recording is not affected.
   }

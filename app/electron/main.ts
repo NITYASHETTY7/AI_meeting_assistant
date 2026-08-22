@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog, shell, Tray, Menu, nativeImage, desktopCapturer } from 'electron'
 import { join } from 'path'
 import fs, { promises as fsPromises } from 'fs'
 import { exec } from 'child_process'
@@ -14,19 +14,106 @@ const KEYTAR_SERVICE = 'mirai-granola'
 
 /** Reference to the main window, used to focus/restore it when a native notification is clicked. */
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
+
+function getAppIcon(sizePx = 64): Electron.NativeImage | undefined {
+  try {
+    const basePath = isDev ? process.cwd() : app.getAppPath()
+    const pngPath = join(basePath, 'public/tray-icon.png')
+    if (fs.existsSync(pngPath)) {
+      const img = nativeImage.createFromPath(pngPath)
+      if (!img.isEmpty()) {
+        return sizePx ? img.resize({ width: sizePx, height: sizePx }) : img
+      }
+    }
+  } catch (err) {
+    console.warn('[main] Failed to load icon:', err)
+  }
+  return undefined
+}
+
+async function createTray() {
+  if (tray) return
+  try {
+    let icon = getAppIcon(32)
+    if (!icon || icon.isEmpty()) {
+      icon = nativeImage.createFromBuffer(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA0SURBVDhPY/wPBAwUACYoTVsDRo1Hw0A0Y2A0DUw0GkZ4gNE0MOGgAYqR/wcYGp+h8RoYAAAkoxn3/nfl4AAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      )
+    }
+    tray = new Tray(icon)
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Open Mirai Granola',
+        click: () => {
+          if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.show()
+            mainWindow.focus()
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        },
+      },
+    ])
+    tray.setToolTip('Mirai Granola — Meeting Assistant')
+    tray.setContextMenu(contextMenu)
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
+  } catch (err) {
+    console.warn('[main] Failed to create system tray icon:', err)
+  }
+}
 
 function createWindow() {
+  const appIcon = getAppIcon(64)
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Mirai Granola',
+    icon: appIcon,
     webPreferences: {
-      preload: join(import.meta.dirname, 'preload.mjs'),
+      preload: join(import.meta.dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      // Meeting detection (MeetingDetectionService) polls every 5s via a
+      // renderer-side setInterval, and recording/transcription timers also
+      // live in the renderer. Electron throttles/suspends renderer timers by
+      // default once the window is hidden (close-to-tray keeps it hidden but
+      // alive) — without this flag, background detection and notifications
+      // silently stop firing as soon as the window is closed to tray.
+      backgroundThrottling: false,
     }
   })
   mainWindow = win
+
+  if (appIcon && !appIcon.isEmpty()) {
+    win.setIcon(appIcon)
+  }
+
+  // Close to tray behavior: keep background meeting detection running
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      win.hide()
+      return false
+    }
+  })
 
   if (isDev) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
@@ -44,15 +131,19 @@ function createWindow() {
 async function getActiveWindowTitles(): Promise<string[]> {
   try {
     if (process.platform === 'win32') {
-      // IMPORTANT: exec() runs commands through cmd.exe on Windows, which mangles
-      // nested double-quotes inside `powershell -Command "..."`. Using
-      // -EncodedCommand (base64 of a UTF-16LE string) sidesteps all quoting
-      // issues entirely — this is the standard robust fix for this failure mode.
-      const ps = `Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object -ExpandProperty MainWindowTitle`
+      const ps = "$ProgressPreference = 'SilentlyContinue'; Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object -ExpandProperty MainWindowTitle"
       const encoded = Buffer.from(ps, 'utf16le').toString('base64')
       const { stdout } = await execAsync(
-        `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`,
-        { timeout: 4000 }
+        `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+        // 8s was too tight — PowerShell's own interpreter cold-start plus
+        // Get-Process enumeration can exceed that under normal system load
+        // (e.g. while actively recording/transcribing), causing this poll
+        // (which runs every 5s) to hit the timeout and log a warning on
+        // nearly every cycle even though the fallback (return []) is
+        // harmless. 15s gives real headroom without meaningfully delaying
+        // meeting-detection responsiveness, since a timeout here just skips
+        // that one poll cycle rather than blocking anything else.
+        { timeout: 15000, windowsHide: true }
       )
       return stdout
         .split(/\r?\n/)
@@ -80,8 +171,14 @@ async function getActiveWindowTitles(): Promise<string[]> {
         return parts.slice(3).join(' ').trim()
       })
       .filter(Boolean)
-  } catch {
-    // Any shell error returns empty list — detection simply won't fire
+  } catch (err) {
+    // Concise, single-line warning — the full error object (with stack
+    // trace, cmd, stdout/stderr) is verbose and this is a routine,
+    // already-handled fallback (every caller treats an empty array as
+    // "no titles available right now"), not something that needs
+    // investigating on every occurrence.
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('[main] getActiveWindowTitles failed (will retry next poll):', message)
     return []
   }
 }
@@ -302,6 +399,32 @@ app.whenReady().then(() => {
     return await getActiveWindowTitles()
   })
 
+  // ── Desktop audio sources (system/loopback capture) ─────────────────────────
+  // Used by AudioCapture.ts to capture the meeting app's output (e.g. Teams)
+  // via chromeMediaSource: 'desktop', in addition to the mic. Without this
+  // handler the renderer silently falls back to mic-only, which is why remote
+  // participants' audio was missing from the transcript when using headphones.
+  //
+  // IMPORTANT: only 'screen' sources are requested, never 'window'. Chromium's
+  // desktop-capture audio loopback on Windows only reliably produces real
+  // system audio when capturing a screen source — requesting audio from a
+  // window source silently returns a track with no usable audio instead of
+  // erroring. AudioCapture.ts previously picked sources[0] from a combined
+  // window+screen list, which was often a window (arbitrary enumeration
+  // order), so the "system"/"Speaker" track carried no real audio — every
+  // utterance from both the user and the other participant then only ever
+  // arrived via the mic track and got tagged "You", which is exactly the
+  // "headphones make it think everyone is me" symptom this fixes.
+  ipcMain.handle('get-desktop-sources', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] })
+      return sources.map((s) => ({ id: s.id, name: s.name }))
+    } catch (err) {
+      console.error('[main] get-desktop-sources failed:', err)
+      return []
+    }
+  })
+
   // ── Native OS notification ──────────────────────────────────────────────────
   // Shows a real Windows/macOS/Linux system notification (Action Center /
   // Notification Center), independent of whether the app window is focused
@@ -412,10 +535,41 @@ app.whenReady().then(() => {
 
   ipcMain.handle('db-delete-meeting', async (_event, meetingId: string) => {
     try {
-      db.deleteMeeting(meetingId)
+      // "Delete" moves the meeting to the Bin (soft delete) rather than
+      // erasing it — see db-permanently-delete-meeting for the real erase.
+      db.softDeleteMeeting(meetingId)
       return { ok: true }
     } catch (err) {
       console.error('[db] delete-meeting failed:', err)
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('db-list-deleted-meetings', async () => {
+    try {
+      return { ok: true, meetings: db.listDeletedMeetings() }
+    } catch (err) {
+      console.error('[db] list-deleted-meetings failed:', err)
+      return { ok: false, meetings: [], error: String(err) }
+    }
+  })
+
+  ipcMain.handle('db-restore-meeting', async (_event, meetingId: string) => {
+    try {
+      db.restoreMeeting(meetingId)
+      return { ok: true }
+    } catch (err) {
+      console.error('[db] restore-meeting failed:', err)
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('db-permanently-delete-meeting', async (_event, meetingId: string) => {
+    try {
+      db.permanentlyDeleteMeeting(meetingId)
+      return { ok: true }
+    } catch (err) {
+      console.error('[db] permanently-delete-meeting failed:', err)
       return { ok: false, error: String(err) }
     }
   })
@@ -491,6 +645,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  void createTray()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -500,7 +655,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit()
   }
   db.closeDatabase()

@@ -1,0 +1,1 @@
+ALTER TABLE `meetings` ADD `deleted_at` integer;

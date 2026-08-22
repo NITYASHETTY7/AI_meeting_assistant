@@ -35,6 +35,14 @@ export interface AuthenticationResult {
   };
 }
 
+/**
+ * Which physical audio track a live-transcription chunk came from:
+ *  - 'You': the mic track.
+ *  - 'Speaker': the system/desktop-loopback track — the other participant's
+ *    audio, captured directly rather than inferred.
+ */
+export type SpeakerTrack = 'You' | 'Speaker';
+
 export interface TranscriptEvent {
   text: string;
   speaker: string;
@@ -61,6 +69,13 @@ export interface DiarizedUtterance {
   start: number;
   /** End time in milliseconds relative to the audio */
   end: number;
+  /**
+   * Provider-reported confidence for this utterance (0-1), when available.
+   * AssemblyAI/Deepgram return real per-word confidence which is averaged
+   * per utterance; Gemini's self-reported low/medium/high is mapped to a
+   * numeric value. Omitted when a provider has no such signal at all.
+   */
+  confidence?: number;
 }
 
 export interface AIProvider {
@@ -78,7 +93,7 @@ export interface AIProvider {
   // Real-time Streaming APIs
   startLiveTranscription(options: LiveTranscriptionOptions): Promise<void>;
   stopLiveTranscription(): Promise<void>;
-  transcribeAudioChunk(chunk: Float32Array): Promise<void>;
+  transcribeAudioChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack): Promise<void>;
   transcribeAudioFile(audioFile: unknown): Promise<string>;
 
   /**

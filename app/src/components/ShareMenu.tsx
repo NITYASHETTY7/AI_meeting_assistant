@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Copy, Mail, FileDown, FileText, Check } from 'lucide-react';
 import { EmailDraftModal } from './EmailDraftModal';
 import type { Meeting } from '../store/useAppStore';
+import { resolveDisplayDuration } from '../services/meetingDuration';
 
 interface ShareMenuProps {
   meeting: Meeting;
@@ -49,7 +50,7 @@ export const ShareMenu = ({ meeting, senderName }: ShareMenuProps) => {
 
     const markdown = [
       `# ${meeting.title}`,
-      `**Date:** ${meeting.date}  **Time:** ${meeting.time}  **Duration:** ${meeting.duration}`,
+      `**Date:** ${meeting.date}  **Time:** ${meeting.time}  **Duration:** ${resolveDisplayDuration(meeting)}`,
       `**Participants:** ${meeting.participants.join(', ')}`,
       '',
       '---',

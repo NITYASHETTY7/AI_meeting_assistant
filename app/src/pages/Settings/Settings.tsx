@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Check, X, Loader2, ArrowUpRight } from 'lucide-react';
+import { Check, X, Loader2 } from 'lucide-react';
 import { ContentLayout } from '../../components/ContentLayout';
 import { SettingsLayout, type SettingsTab } from '../../components/SettingsLayout';
 import { SettingsSection } from '../../components/SettingsSection';
@@ -11,8 +11,9 @@ import { ThemeSelector } from '../../components/ThemeSelector';
 import { ToggleRow } from '../../components/ToggleRow';
 import { DropdownRow } from '../../components/DropdownRow';
 import { ActionButton } from '../../components/ActionButton';
-import { useAppStore } from '../../store/useAppStore';
+import { useAppStore, DEFAULT_PROVIDER_MODELS } from '../../store/useAppStore';
 import { ProviderManager } from '../../services/ai/ProviderManager';
+import { POST_RECORDING_ONLY_PROVIDERS } from '../../services/transcription/TranscriptionManager';
 
 export const Settings = () => {
   const store = useAppStore();
@@ -20,11 +21,21 @@ export const Settings = () => {
   // Connection Test States (synchronized with store status)
   const [testState, setTestState] = useState<'idle' | 'testing' | 'success' | 'failed'>(store.connectionStatus);
   const [testErrorMessage, setTestErrorMessage] = useState('');
+  /**
+   * Explains what a successful connection actually gets the user for THIS
+   * provider — e.g. AssemblyAI/Deepgram authenticate fine but have no chat
+   * model at all, and Gemini/AssemblyAI/Deepgram only produce a transcript
+   * after the recording stops, not live. A bare "Connection Succeeded!" is
+   * technically true for all of these but misleads the user into expecting
+   * capabilities (a chat tab, a live transcript) the provider doesn't have.
+   */
+  const [testCapabilityMessage, setTestCapabilityMessage] = useState('');
 
   // Sync testState with store on switch
   useEffect(() => {
     setTestState(store.connectionStatus);
     setTestErrorMessage('');
+    setTestCapabilityMessage('');
   }, [store.provider]);
 
   // ── Startup / provider-switch credential check ─────────────────────────────
@@ -122,6 +133,43 @@ export const Settings = () => {
     }
   };
 
+  /**
+   * Builds a short capability-explainer shown right after a successful
+   * connection test, so the user isn't left assuming a provider does more
+   * (or less) than it actually does:
+   *   - STT-only providers with no chat model at all (AssemblyAI, Deepgram)
+   *     — clarify summaries/chat won't work with this provider alone.
+   *   - Post-recording-only STT providers (AssemblyAI, Deepgram, Gemini)
+   *     — clarify the transcript appears after recording stops, not live.
+   *   - Chat-only providers with no transcription (Anthropic, AWS Bedrock,
+   *     Azure OpenAI, Ollama, OpenRouter, Custom OpenAI-Compatible)
+   *     — clarify recording continues but without a live/auto transcript.
+   */
+  const buildCapabilityMessage = (
+    providerName: string,
+    capabilities: { chat: boolean; speech_to_text: boolean }
+  ): string => {
+    const isPostRecordingOnly = POST_RECORDING_ONLY_PROVIDERS.includes(providerName);
+
+    if (capabilities.speech_to_text && !capabilities.chat) {
+      return isPostRecordingOnly
+        ? `${providerName} is speech-to-text only — it doesn't provide AI capabilities like summaries or chat. Your transcript will appear once you stop recording, not live.`
+        : `${providerName} is speech-to-text only — it doesn't provide AI capabilities like summaries or chat.`;
+    }
+
+    if (capabilities.speech_to_text && capabilities.chat && isPostRecordingOnly) {
+      return `${providerName} transcribes after recording stops, not live — your transcript will appear once you end the meeting.`;
+    }
+
+    if (!capabilities.speech_to_text && capabilities.chat) {
+      return `${providerName} has no speech-to-text — recording won't produce a transcript, live or after stopping. ` +
+        `Type notes manually during the meeting, and ${providerName} can still summarize those notes and extract action items. ` +
+        `You can also use it for general AI chat unrelated to any meeting.`;
+    }
+
+    return '';
+  };
+
   const handleTestConnection = async () => {
     setTestState('testing');
     setTestErrorMessage('');
@@ -138,9 +186,11 @@ export const Settings = () => {
         // Cache the models dynamically in Zustand store
         store.setCachedModelsForProvider(store.provider, result.models);
         store.setCapabilities(result.capabilities);
+        setTestCapabilityMessage(buildCapabilityMessage(store.provider, result.capabilities));
       } else {
         setTestState('failed');
         setTestErrorMessage(result.message);
+        setTestCapabilityMessage('');
         store.setConnectionStatus('failed');
         store.setAvailableModels([]);
         store.setModel('');
@@ -148,6 +198,7 @@ export const Settings = () => {
     } catch (err: any) {
       setTestState('failed');
       setTestErrorMessage(err?.message || 'Verification aborted.');
+      setTestCapabilityMessage('');
       store.setConnectionStatus('failed');
       store.setAvailableModels([]);
       store.setModel('');
@@ -213,23 +264,32 @@ export const Settings = () => {
                     />
 
                     {/* Model Selection (hidden for AssemblyAI since it only transcribes) */}
-                    {store.provider !== 'AssemblyAI' && (
-                      <DropdownRow
-                        label="Default Model"
-                        description={
-                          store.connectionStatus === 'success'
-                            ? "Select the default model configuration for summarization."
-                            : "Please test connection/authenticate first to load available models."
-                        }
-                        value={store.model}
-                        onChange={store.setModel}
-                        options={store.availableModels.map((m) => ({
-                          value: m,
-                          label: m,
-                        }))}
-                        disabled={store.connectionStatus !== 'success'}
-                      />
-                    )}
+                    {store.provider !== 'AssemblyAI' && (() => {
+                      const validCachedModels = store.availableModels.filter(
+                        (m) => store.provider !== 'Groq' || (!m.includes('qwen') && !m.includes('gpt-'))
+                      );
+                      const activeModels = validCachedModels.length > 0
+                        ? validCachedModels
+                        : (DEFAULT_PROVIDER_MODELS[store.provider] || ['llama-3.3-70b-versatile']);
+                      
+                      const selectedModel = activeModels.includes(store.model)
+                        ? store.model
+                        : activeModels[0];
+
+                      return (
+                        <DropdownRow
+                          label="Default Model"
+                          description="Select the default model for summarization and action items."
+                          value={selectedModel}
+                          onChange={store.setModel}
+                          options={activeModels.map((m) => ({
+                            value: m,
+                            label: m,
+                          }))}
+                          disabled={false}
+                        />
+                      );
+                    })()}
 
                     {/* Conditional API Key Input */}
                     {(store.provider === 'OpenAI' ||
@@ -361,8 +421,13 @@ export const Settings = () => {
                         Test connection status with {store.provider} to verify if your credential configuration works.
                       </p>
                       {testState === 'failed' && testErrorMessage && (
-                        <p className="text-[10px] text-red-500 dark:text-red-400 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                        <p className="text-[10px] text-sky-400 dark:text-sky-300 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
                           <X className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Error: {testErrorMessage}
+                        </p>
+                      )}
+                      {testState === 'success' && testCapabilityMessage && (
+                        <p className="text-[10px] text-amber-500 dark:text-amber-400 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                          <span className="mt-0.5 shrink-0">ⓘ</span> {testCapabilityMessage}
                         </p>
                       )}
                     </div>
@@ -379,7 +444,7 @@ export const Settings = () => {
                         </span>
                       )}
                       {testState === 'failed' && (
-                        <span className="text-xs text-red-500 dark:text-red-400 flex items-center gap-1.5 font-bold">
+                        <span className="text-xs text-sky-400 dark:text-sky-300 flex items-center gap-1.5 font-bold">
                           <X className="w-4 h-4" /> Connection Failed
                         </span>
                       )}
@@ -557,22 +622,14 @@ export const Settings = () => {
                   <SettingsCard>
                     <SettingsRow
                       label="Database File"
-                      description="Current path to the local SQLite database file. Relocating an active database is not yet supported — this will be added in a future update."
+                      description="Current path to the local SQLite database file, on this device."
                       control={
-                        <div className="flex items-center gap-2">
-                          <code
-                            className="text-[10px] font-mono px-2 py-1 rounded"
-                            style={{ background: 'var(--bg-hover)', border: '1px solid var(--border)', color: 'var(--text-tertiary)' }}
-                          >
-                            {storagePaths?.databasePath || 'Loading…'}
-                          </code>
-                          <span
-                            className="text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wide"
-                            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}
-                          >
-                            Coming soon
-                          </span>
-                        </div>
+                        <code
+                          className="text-[10px] font-mono px-2 py-1 rounded"
+                          style={{ background: 'var(--bg-hover)', border: '1px solid var(--border)', color: 'var(--text-tertiary)' }}
+                        >
+                          {storagePaths?.databasePath || 'Loading…'}
+                        </code>
                       }
                     />
                     <SettingsRow
@@ -647,60 +704,11 @@ export const Settings = () => {
                 </SettingsSection>
               );
 
-            case 'advanced':
-              return (
-                <SettingsSection
-                  title="Advanced Development Features"
-                  description="Manage system log properties, developer flags, and updates checks."
-                >
-                  <details className="group border border-zinc-200 dark:border-zinc-900 rounded-xl overflow-hidden [&_summary::-webkit-details-marker]:hidden bg-zinc-50 dark:bg-zinc-900/10">
-                    <summary className="flex items-center justify-between p-5 focus:outline-none cursor-pointer bg-zinc-100/50 dark:bg-zinc-900/30">
-                      <div className="flex items-center gap-2">
-                        <ShieldAlert className="w-4.5 h-4.5 text-indigo-400" />
-                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wider">
-                          Toggle System Developer Toggles
-                        </span>
-                      </div>
-                      <span className="text-zinc-500 group-open:rotate-180 transition-transform duration-200">
-                        ▼
-                      </span>
-                    </summary>
-
-                    <div className="border-t border-zinc-200 dark:border-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-900">
-                      <ToggleRow
-                        label="Enable Debug Logger"
-                        description="Stream runtime warnings inside the console terminal interface."
-                        checked={store.debugLogs}
-                        onChange={store.setDebugLogs}
-                      />
-                      <ToggleRow
-                        label="Sandbox Developer Mode"
-                        description="Activate mockup features interface and developer test screens."
-                        checked={store.devMode}
-                        onChange={store.setDevMode}
-                      />
-                      <ToggleRow
-                        label="Experimental UI Features"
-                        description="Unlock experimental layout styles and animation properties."
-                        checked={store.experimentalFeatures}
-                        onChange={store.setExperimentalFeatures}
-                      />
-                      <ToggleRow
-                        label="Automatic App Updates"
-                        description="Download updates and hotfixes automatically in the background."
-                        checked={store.autoUpdate}
-                        onChange={store.setAutoUpdate}
-                      />
-                    </div>
-                  </details>
-                </SettingsSection>
-              );
-
             case 'about':
               return (
                 <SettingsSection
                   title="About Mirai Granola"
-                  description="Technical details, repository links, documentation, and app metadata."
+                  description="Application metadata."
                 >
                   <SettingsCard>
                     <SettingsRow
@@ -710,45 +718,6 @@ export const Settings = () => {
                     <SettingsRow
                       label="Build Version"
                       control={<span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v1.0.0-alpha.1</span>}
-                    />
-                    <SettingsRow
-                      label="License Agreement"
-                      control={<span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">MIT License</span>}
-                    />
-                    <SettingsRow
-                      label="Repository & Community"
-                      description="Contribute to features development or ask questions on documentation pages."
-                      control={
-                        <div className="flex flex-col gap-2 w-48 text-xs font-semibold">
-                          <a
-                            href="https://github.com"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center justify-between text-zinc-400 hover:text-indigo-400 transition-colors py-1 border-b border-zinc-900"
-                          >
-                            <span>GitHub Repository</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </a>
-                          <a
-                            href="https://docs.mirai.dev"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center justify-between text-zinc-400 hover:text-indigo-400 transition-colors py-1 border-b border-zinc-900"
-                          >
-                            <span>Documentation</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </a>
-                          <a
-                            href="https://docs.mirai.dev/privacy"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center justify-between text-zinc-400 hover:text-indigo-400 transition-colors py-1"
-                          >
-                            <span>Privacy Policy</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </a>
-                        </div>
-                      }
                     />
                   </SettingsCard>
                 </SettingsSection>

@@ -91,4 +91,45 @@ export class ProviderManager {
   static getSupportedProviders(): string[] {
     return Object.keys(this.instances);
   }
+
+  /**
+   * Returns a chat-capable provider regardless of which STT provider is active.
+   * Priority:
+   *   1. The active provider if it has a chat model (OpenAI, Groq, Anthropic, etc.)
+   *   2. Any other provider that has an API key saved and supports chat
+   *   3. Groq as the last resort (always has compound-mini)
+   */
+  static getChatProvider(): AIProvider {
+    const state = useAppStore.getState();
+    const activeProviderName = state.provider;
+
+    // Chat-capable providers in preference order
+    const CHAT_PROVIDERS = [
+      'OpenAI', 'Groq', 'Anthropic', 'Gemini', 'Azure OpenAI',
+      'OpenRouter', 'AWS Bedrock', 'Ollama', 'Custom OpenAI-Compatible',
+    ];
+
+    // 1. Try active provider first if it's chat-capable
+    if (CHAT_PROVIDERS.includes(activeProviderName)) {
+      return this.getActiveProvider();
+    }
+
+    // 2. Active provider is STT-only (AssemblyAI / Deepgram) — find another with a key
+    for (const name of CHAT_PROVIDERS) {
+      const key = state.apiKeys[name];
+      if (!key) continue;
+      const provider = this.instances[name];
+      if (!provider) continue;
+      provider.initialize({
+        provider: name,
+        apiKey: key,
+        baseUrl: state.baseUrls[name] || '',
+        defaultModel: state.cachedModels?.[name]?.[0] || '',
+      });
+      return provider;
+    }
+
+    // 3. Absolute fallback — return Groq even without a key (will surface a useful error)
+    return this.getActiveProvider();
+  }
 }

@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Calendar, Users, Edit2, Check,
-  Mic, Volume2, Square, Play, Pause, Circle, X,
+  Mic, MicOff, Volume2, Square, Play, Pause, Circle, X,
   ShieldAlert, Radio, Settings2,
 } from 'lucide-react';
 import { useAppStore, type Meeting } from '../store/useAppStore';
 import { AudioManager } from '../services/audio/AudioManager';
+import { resolveDisplayDuration } from '../services/meetingDuration';
 
 interface MeetingHeaderProps {
   meeting: Meeting;
@@ -32,6 +34,7 @@ interface MeetingHeaderProps {
  */
 export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
   // ── Title editing ────────────────────────────────────────────────────────
+  const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const [titleInput, setTitleInput] = useState(meeting.title);
 
@@ -142,7 +145,7 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
     }
 
     try {
-      await controller.start(store.micDevice);
+      await controller.start(store.micDevice, undefined, meeting.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start recording.';
       console.error('Audio capture failed:', err);
@@ -265,14 +268,24 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
             {meeting.date} at {meeting.time} (
             {store.recordingStatus === 'recording' || store.recordingStatus === 'paused'
               ? formatTimer(store.recordingDuration)
-              : meeting.duration}
+              : resolveDisplayDuration(meeting)}
             )
           </span>
           <span className="hidden sm:inline" style={{ color: 'var(--text-disabled)' }}>•</span>
           <span className="flex items-center gap-1.5">
             <Users className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Participants:</span>{' '}
-            {meeting.participants.join(', ')}
+            {(() => {
+              const set = new Set<string>(meeting.participants && meeting.participants.length > 0 ? meeting.participants : ['You']);
+              if (meeting.transcript) {
+                meeting.transcript.forEach((t) => {
+                  if (t.speaker) {
+                    set.add(t.speaker === 'Speaker' ? 'Other Participant' : t.speaker);
+                  }
+                });
+              }
+              return Array.from(set).join(', ');
+            })()}
           </span>
         </div>
       </div>
@@ -288,6 +301,32 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
             className="cursor-default"
           >
             <ShieldAlert className="w-3.5 h-3.5" style={{ color: 'var(--warning)' }} />
+          </span>
+        )}
+
+        {/* Mic device health warning (e.g. Bluetooth profile switch/drop) */}
+        {store.micDeviceWarning && (store.recordingStatus === 'recording' || store.recordingStatus === 'paused') && (
+          <span
+            title={store.micDeviceWarning}
+            className="cursor-default flex items-center gap-1 text-[10px] font-semibold"
+            style={{ color: 'var(--warning)' }}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+            Mic issue
+          </span>
+        )}
+
+        {/* System/desktop audio loopback warning — when the other participant's
+            voice isn't being captured separately from the mic, so speaker
+            labels ("You" vs "Others") may be inaccurate for this recording. */}
+        {store.systemAudioWarning && (store.recordingStatus === 'recording' || store.recordingStatus === 'paused') && (
+          <span
+            title={store.systemAudioWarning}
+            className="cursor-default flex items-center gap-1 text-[10px] font-semibold"
+            style={{ color: 'var(--warning)' }}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+            Speaker audio issue
           </span>
         )}
 
@@ -311,19 +350,17 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
 
         {/* ── Controls ── */}
         {store.recordingStatus === 'idle' || store.recordingStatus === 'stopped' ? (
-          /* Start Recording button */
           <button
-            onClick={handleStart}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-colors text-white"
+            onClick={() => handleStart()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg cursor-pointer transition-all text-white shadow-sm hover:shadow-md"
             style={{
               background: 'var(--accent)',
-              boxShadow: '0 1px 4px rgba(59,159,216,0.30)',
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-hover)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--accent)')}
           >
             <Circle className="w-3.5 h-3.5 fill-current" />
-            Start Recording
+            <span>Start Recording</span>
           </button>
         ) : (
           <>
@@ -339,6 +376,33 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
                 Resume
               </button>
             )}
+
+            {/* In-App Mic Mute / Unmute Button */}
+            <button
+              onClick={() => store.toggleMicMute()}
+              title={
+                store.isMicMuted
+                  ? 'Mic is muted — click to unmute'
+                  : 'Mute your microphone (keeps recording other participants)'
+              }
+              className={`mg-btn text-xs ${
+                store.isMicMuted
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                  : 'mg-btn-secondary'
+              }`}
+            >
+              {store.isMicMuted ? (
+                <>
+                  <MicOff className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Muted</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>Mute</span>
+                </>
+              )}
+            </button>
 
             {/* Stop */}
             <button onClick={handleStop} className="mg-btn mg-btn-ghost text-xs">
@@ -476,28 +540,36 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
                   </button>
                 </div>
 
-                {/* Future: Recording Quality */}
-                <div className="flex items-center justify-between opacity-40">
+                {/* Recording Quality — real setting, editable in Settings */}
+                <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Recording Quality</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>High · 44.1 kHz</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {store.quality === 'high' ? 'High' : store.quality === 'medium' ? 'Medium' : 'Low'} · {(parseInt(store.sampleRate) / 1000).toFixed(1)} kHz
+                    </p>
                   </div>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide"
-                    style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}>
-                    Future
-                  </span>
+                  <button
+                    onClick={() => { setShowMicPopover(false); navigate('/settings'); }}
+                    className="text-[10px] font-semibold cursor-pointer hover:underline"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    Change in Settings
+                  </button>
                 </div>
 
-                {/* Future: Sample Rate */}
-                <div className="flex items-center justify-between opacity-40">
+                {/* Sample Rate — real setting, editable in Settings */}
+                <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Sample Rate</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>44100 Hz</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{store.sampleRate} Hz</p>
                   </div>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide"
-                    style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}>
-                    Future
-                  </span>
+                  <button
+                    onClick={() => { setShowMicPopover(false); navigate('/settings'); }}
+                    className="text-[10px] font-semibold cursor-pointer hover:underline"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    Change in Settings
+                  </button>
                 </div>
               </div>
 

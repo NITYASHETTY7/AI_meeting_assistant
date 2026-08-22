@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Plus, Search, MessageSquare, Send, Trash2, Sparkles, Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { ProviderManager } from '../../services/ai/ProviderManager';
+import { stripMarkdownSyntax } from '../../services/ai/textSanitizer';
 
 const THREAD_LIST_COLLAPSED_KEY = 'mirai-chat-threadlist-collapsed';
 
@@ -134,7 +135,7 @@ export const Chat = () => {
         throw new Error('No API key configured. Add one in Settings to use AI chat.');
       }
 
-      const aiProvider = ProviderManager.getActiveProvider();
+      const aiProvider = ProviderManager.getChatProvider();
       const thread = useAppStore.getState().chatThreads.find((t) => t.id === threadId);
       const history = (thread?.messages ?? []).map((m) => ({ role: m.role, content: m.content }));
 
@@ -144,7 +145,7 @@ export const Chat = () => {
         : history;
 
       const reply = await aiProvider.chat(messages);
-      appendChatMessage(threadId, 'assistant', reply || 'No response received.');
+      appendChatMessage(threadId, 'assistant', stripMarkdownSyntax(reply) || 'No response received.');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to get a response.';
       setError(message);

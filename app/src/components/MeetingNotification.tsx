@@ -15,7 +15,9 @@ import { AudioManager } from '../services/audio/AudioManager';
  *  - "Start Recording" navigates to /meeting, creates a new meeting record,
  *    and immediately begins audio capture + live transcription.
  *  - "Not Now" dismisses the banner for this specific meeting ID.
- *    The same meeting will NOT prompt again in this session.
+ *    That exact meeting will not prompt again while still detected, but a
+ *    later, distinct call is free to notify again — see
+ *    MeetingDetectionService for how the dismissal is scoped/released.
  *  - Auto-dismisses when recording becomes active.
  *  - Also triggers a native OS notification (via MeetingDetectionService)
  *    so the user is alerted even when the app isn't focused.

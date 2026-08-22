@@ -18,6 +18,88 @@ export interface TimelineSegment {
   label: string;
 }
 
+export type MeetingTemplateId = 
+  | 'default' 
+  | 'interview' 
+  | 'client' 
+  | 'recruitment_metrics' 
+  | 'hr_strategy' 
+  | 'performance_feedback' 
+  | 'team_recap';
+
+export interface ScorecardCriterion {
+  id: string;
+  category: string;
+  score?: number; // 1 to 5
+  comments: string;
+}
+
+export interface CandidateInfo {
+  name: string;
+  role: string;
+  scorecard: ScorecardCriterion[];
+  overallRecommendation?: 'Strong Hire' | 'Hire' | 'Leaning Hire' | 'No Hire';
+}
+
+export interface ClientRequirement {
+  id: string;
+  title: string;
+  category: 'Feature Request' | 'Constraint / Budget' | 'Feedback / Pain Point' | 'Action Item';
+  priority: 'High' | 'Medium' | 'Low';
+  notes: string;
+}
+
+export interface ClientMeetingInfo {
+  clientName: string;
+  projectName: string;
+  requirements: ClientRequirement[];
+}
+
+/**
+ * Shared list-item shape used by the four newer template types
+ * (Recruitment Metrics, HR Strategy, Performance Feedback, Team Recap).
+ * Each template reuses this instead of a bespoke shape per template —
+ * the meaning of "category" and "label" differs per template (e.g. a
+ * hiring-funnel stage vs. a review goal), but the CRUD/display shape is
+ * identical, so one generic interface + one set of store actions covers
+ * all four rather than duplicating near-identical code four times.
+ */
+export interface TemplateInsightItem {
+  id: string;
+  /** Short label — e.g. "Applicants → Interviews", "Q3 Headcount Freeze", "Missed sprint deadline twice" */
+  label: string;
+  /** Template-specific category/tag — see each *_CATEGORIES const for the allowed values per template */
+  category: string;
+  /** Optional numeric value for metrics-style templates (e.g. count, %, days) — omitted where not applicable */
+  value?: string;
+  /** Supporting detail extracted from the transcript */
+  notes: string;
+}
+
+export interface RecruitmentMetricsInfo {
+  /** Free-text AI summary of the overall hiring funnel discussion */
+  summary: string;
+  metrics: TemplateInsightItem[];
+}
+
+export interface HrStrategyInfo {
+  summary: string;
+  points: TemplateInsightItem[];
+}
+
+export interface PerformanceFeedbackInfo {
+  employeeName: string;
+  role: string;
+  summary: string;
+  items: TemplateInsightItem[];
+  overallRating?: 'Exceeds Expectations' | 'Meets Expectations' | 'Needs Improvement' | 'Unsatisfactory';
+}
+
+export interface TeamRecapInfo {
+  summary: string;
+  highlights: TemplateInsightItem[];
+}
+
 export interface Meeting {
   id: string;
   title: string;
@@ -30,8 +112,32 @@ export interface Meeting {
   aiNotes: string;
   /** Editable AI-generated summary document (Granola-style). Separate from legacy aiNotes. */
   aiSummary: string;
+  /**
+   * Free-form rich-text notes the user types manually below the transcript
+   * card. Stored as sanitized HTML (bold/italic/lists survive reloads).
+   * Included in AI generation alongside the transcript so summaries/action
+   * items/decisions/follow-ups account for anything typed manually.
+   */
+  additionalNotes: string;
   actionItems: ActionItem[];
   timeline: TimelineSegment[];
+  /** Meeting template type */
+  templateId?: MeetingTemplateId;
+  candidateInfo?: CandidateInfo;
+  clientInfo?: ClientMeetingInfo;
+  recruitmentMetricsInfo?: RecruitmentMetricsInfo;
+  hrStrategyInfo?: HrStrategyInfo;
+  performanceFeedbackInfo?: PerformanceFeedbackInfo;
+  teamRecapInfo?: TeamRecapInfo;
+  /** Unix ms timestamp of when this meeting was moved to the Bin. Only set on entries in `deletedMeetings`. */
+  deletedAt?: number;
+  /**
+   * Unix ms timestamp this meeting was originally created. Used to keep the
+   * Home dashboard's newest-first ordering correct when a meeting is
+   * restored from the Bin back into the middle of the existing list, rather
+   * than always re-appearing at the very top regardless of its real date.
+   */
+  createdAt?: number;
 }
 
 export type AppTheme = 'dark' | 'light' | 'system';
@@ -84,15 +190,57 @@ interface AppState {
   activeMeetingId: string | null;
   setActiveMeetingId: (id: string | null) => void;
   createMockNote: () => string;
-  /**
-   * Creates a new meeting record at recording start time.
-   * Sets it as the active meeting and returns its ID.
-   * Called by RecordingController.start() so the transcript always has a target.
-   */
-  createMeetingForRecording: (source?: string) => string;
+  // Recording Mode & Template selection
+  selectedRecordingTemplate: MeetingTemplateId;
+  setSelectedRecordingTemplate: (templateId: MeetingTemplateId) => void;
+  setMeetingTemplate: (meetingId: string, templateId: MeetingTemplateId) => void;
+  updateCandidateScorecard: (meetingId: string, criterionId: string, score?: number, comments?: string) => void;
+  addScorecardCriterion: (meetingId: string, category: string) => void;
+  removeScorecardCriterion: (meetingId: string, criterionId: string) => void;
+  updateCandidateInfo: (meetingId: string, candidateInfo: Partial<CandidateInfo>) => void;
+  addClientRequirement: (meetingId: string, req: Omit<ClientRequirement, 'id'>) => void;
+  updateClientRequirement: (meetingId: string, reqId: string, updates: Partial<ClientRequirement>) => void;
+  deleteClientRequirement: (meetingId: string, reqId: string) => void;
+  updateClientInfo: (meetingId: string, updates: Partial<Pick<ClientMeetingInfo, 'clientName' | 'projectName'>>) => void;
+
+  // Recruitment Metrics / HR Strategy / Performance Feedback / Team Recap —
+  // all four share the same generic TemplateInsightItem CRUD shape, keyed by
+  // which top-level info field on the Meeting the caller targets.
+  setRecruitmentMetricsInfo: (meetingId: string, info: RecruitmentMetricsInfo) => void;
+  addRecruitmentMetric: (meetingId: string, item: Omit<TemplateInsightItem, 'id'>) => void;
+  updateRecruitmentMetric: (meetingId: string, itemId: string, updates: Partial<TemplateInsightItem>) => void;
+  deleteRecruitmentMetric: (meetingId: string, itemId: string) => void;
+
+  setHrStrategyInfo: (meetingId: string, info: HrStrategyInfo) => void;
+  addHrStrategyPoint: (meetingId: string, item: Omit<TemplateInsightItem, 'id'>) => void;
+  updateHrStrategyPoint: (meetingId: string, itemId: string, updates: Partial<TemplateInsightItem>) => void;
+  deleteHrStrategyPoint: (meetingId: string, itemId: string) => void;
+
+  setPerformanceFeedbackInfo: (meetingId: string, info: PerformanceFeedbackInfo) => void;
+  addPerformanceFeedbackItem: (meetingId: string, item: Omit<TemplateInsightItem, 'id'>) => void;
+  updatePerformanceFeedbackItem: (meetingId: string, itemId: string, updates: Partial<TemplateInsightItem>) => void;
+  deletePerformanceFeedbackItem: (meetingId: string, itemId: string) => void;
+
+  setTeamRecapInfo: (meetingId: string, info: TeamRecapInfo) => void;
+  addTeamRecapHighlight: (meetingId: string, item: Omit<TemplateInsightItem, 'id'>) => void;
+  updateTeamRecapHighlight: (meetingId: string, itemId: string, updates: Partial<TemplateInsightItem>) => void;
+  deleteTeamRecapHighlight: (meetingId: string, itemId: string) => void;
+
+  createMeetingForRecording: (source?: string, templateId?: MeetingTemplateId) => string;
   toggleActionItem: (meetingId: string, itemId: string) => void;
+  /** Moves a meeting to the Bin. It disappears from the main list but can be restored or permanently erased from there. */
   deleteMeeting: (id: string) => void;
   appendTranscriptLine: (meetingId: string, line: TranscriptLine) => void;
+
+  // Bin (soft-deleted meetings)
+  deletedMeetings: Meeting[];
+  isBinHydrated: boolean;
+  /** Loads meetings currently in the Bin from the local database. */
+  hydrateBinFromDb: () => Promise<void>;
+  /** Moves a meeting from the Bin back to the active list. */
+  restoreMeeting: (id: string) => void;
+  /** Permanently erases a meeting and all its data (transcript, notes, chat). Cannot be undone. */
+  permanentlyDeleteMeeting: (id: string) => void;
   
   // Action Item CRUD
   addActionItem: (meetingId: string, text: string) => void;
@@ -101,12 +249,13 @@ interface AppState {
 
   // AI Summary
   updateAiSummary: (meetingId: string, summary: string) => void;
+  updateAdditionalNotes: (meetingId: string, notes: string) => void;
 
   // Duration
   /** Writes the final recorded duration (e.g. "12m", "1h 05m") onto a meeting. */
   setMeetingDuration: (meetingId: string, duration: string) => void;
 
-  /** Updates a meeting's preview text (shown on Home/History cards). */
+  /** Updates a meeting's preview text (shown on Home dashboard cards). */
   setMeetingPreview: (meetingId: string, preview: string) => void;
 
   // Settings State variables
@@ -154,6 +303,9 @@ interface AppState {
   // Recording State variables
   recordingStatus: RecordingStatus;
   setRecordingStatus: (status: RecordingStatus) => void;
+  isMicMuted: boolean;
+  setIsMicMuted: (isMicMuted: boolean) => void;
+  toggleMicMute: () => void;
   recordingDuration: number;
   setRecordingDuration: (duration: number) => void;
   incrementRecordingDuration: () => void;
@@ -173,6 +325,29 @@ interface AppState {
   setTranscriptionStatus: (status: TranscriptionStatus) => void;
   lastTranscriptionError: string | null;
   setLastTranscriptionError: (message: string | null) => void;
+  /**
+   * Set when the active microphone track reports it has ended or muted
+   * unexpectedly mid-recording — most commonly a Bluetooth mic's audio
+   * profile switching or briefly dropping the connection, which Windows
+   * surfaces as the audio endpoint device being invalidated
+   * (AUDCLNT_E_DEVICE_INVALIDATED). Recording continues, but voice
+   * detection accuracy degrades while the track is in this state, so the
+   * user is shown a visible warning rather than silently getting a worse
+   * transcript with no explanation.
+   */
+  micDeviceWarning: string | null;
+  setMicDeviceWarning: (message: string | null) => void;
+  /**
+   * Non-null when system/desktop audio loopback capture appears to be
+   * producing no real signal (e.g. Windows granted a window source instead
+   * of a screen source, or loopback isn't supported for the current
+   * output device) — surfaced so "the other participant's voice is
+   * showing up as 'You'" is diagnosable instead of a silent failure, since
+   * with no system-audio signal every utterance only ever arrives via the
+   * mic track.
+   */
+  systemAudioWarning: string | null;
+  setSystemAudioWarning: (message: string | null) => void;
   streamState: StreamState;
   setStreamState: (state: StreamState) => void;
   activeSessionId: string | null;
@@ -251,10 +426,23 @@ interface AppState {
   // Meeting Detection
   detectedMeeting: DetectedMeeting | null;
   setDetectedMeeting: (meeting: DetectedMeeting | null) => void;
-  dismissedMeetingIds: Set<string>;
-  dismissDetectedMeeting: (meetingId: string) => void;
   isMeetingNotificationVisible: boolean;
   setMeetingNotificationVisible: (visible: boolean) => void;
+  dismissedMeetingIds: Set<string>;
+  dismissDetectedMeeting: (meetingId: string) => void;
+  /**
+   * Releases a meeting ID from the dismissed set once its detection window
+   * has actually ended (the meeting app/tab is no longer open). Meeting IDs
+   * are content-based hashes of (detector, source, label) — for apps whose
+   * window title stays static for the whole call (e.g. Teams desktop shows
+   * "Chat | <name> | Microsoft Teams" throughout), a later, distinct call
+   * with the same person produces the identical ID. Without releasing it
+   * here, dismissing or starting a recording once would permanently block
+   * that same title from ever notifying again for the rest of the app
+   * session — this call keeps the block scoped to only the single
+   * continuous detection window it was dismissed during.
+   */
+  clearDismissedMeeting: (meetingId: string) => void;
 
   // Persistence (SQLite via Drizzle, main process)
   /** True once the initial load from the local database has completed. */
@@ -297,6 +485,7 @@ function persistMeeting(meeting: Meeting) {
       timeline: meeting.timeline,
       aiNotes: meeting.aiNotes,
       aiSummary: meeting.aiSummary,
+      additionalNotes: meeting.additionalNotes,
     })
     .catch((err: unknown) => console.error('[persist] upsert-meeting failed:', err));
 }
@@ -306,6 +495,20 @@ function persistDeleteMeeting(meetingId: string) {
   window.electronAPI
     .dbDeleteMeeting(meetingId)
     .catch((err: unknown) => console.error('[persist] delete-meeting failed:', err));
+}
+
+function persistRestoreMeeting(meetingId: string) {
+  if (!window.electronAPI?.dbRestoreMeeting) return;
+  window.electronAPI
+    .dbRestoreMeeting(meetingId)
+    .catch((err: unknown) => console.error('[persist] restore-meeting failed:', err));
+}
+
+function persistPermanentlyDeleteMeeting(meetingId: string) {
+  if (!window.electronAPI?.dbPermanentlyDeleteMeeting) return;
+  window.electronAPI
+    .dbPermanentlyDeleteMeeting(meetingId)
+    .catch((err: unknown) => console.error('[persist] permanently-delete-meeting failed:', err));
 }
 
 function persistTranscriptLine(meetingId: string, line: TranscriptLine) {
@@ -321,6 +524,31 @@ function persistActionItems(meetingId: string, items: ActionItem[]) {
     .dbReplaceActionItems(meetingId, items)
     .catch((err: unknown) => console.error('[persist] replace-action-items failed:', err));
 }
+export const DEFAULT_PROVIDER_MODELS: Record<string, string[]> = {
+  'Groq': [
+    'llama-3.1-8b-instant',
+    'llama-3.3-70b-versatile',
+    'deepseek-r1-distill-llama-70b',
+    'gemma2-9b-it',
+  ],
+  'OpenAI': [
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
+    'gpt-3.5-turbo',
+  ],
+  'Anthropic': [
+    'claude-3-5-sonnet-latest',
+    'claude-3-5-haiku-latest',
+    'claude-3-opus-latest',
+  ],
+  'Gemini': [
+    'gemini-2.0-flash',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+  ],
+  'Deepgram': ['nova-2', 'nova-2-general', 'nova-2-meeting'],
+};
 
 export const useAppStore = create<AppState>((set, get) => ({
   calendarConnected: false,
@@ -347,14 +575,45 @@ export const useAppStore = create<AppState>((set, get) => ({
             transcript: m.transcript,
             aiNotes: m.aiNotes,
             aiSummary: m.aiSummary,
+            additionalNotes: m.additionalNotes ?? '',
             actionItems: m.actionItems,
             timeline: m.timeline,
+            createdAt: m.createdAt,
           })),
           isHydrated: true,
         });
       } else {
         console.error('[hydrate] list-meetings returned error:', result.error);
         set({ isHydrated: true });
+      }
+
+      // Auto-load all credentials from OS keychain
+      if (window.electronAPI?.loadCredential) {
+        const supported = ['Groq', 'OpenAI', 'Azure OpenAI', 'Anthropic', 'Gemini', 'AssemblyAI', 'Deepgram', 'OpenRouter', 'Custom OpenAI-Compatible'];
+        for (const p of supported) {
+          try {
+            const cred = await window.electronAPI.loadCredential(p);
+            if (cred.ok && cred.secret) {
+              get().setApiKeyForProvider(p, cred.secret);
+              get().markProviderKeySaved(p);
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
+      // Sanitize obsolete or decommissioned models — reset to groq/compound-mini which is confirmed working
+      const currentModel = get().model;
+      if (
+        !currentModel ||
+        currentModel.includes('gemma') ||
+        currentModel.includes('mixtral') ||
+        currentModel.includes('qwen') ||
+        currentModel.includes('deepseek') ||
+        currentModel.includes('70b') ||
+        currentModel === 'llama-3.1-8b-instant' ||
+        currentModel === 'llama-3.3-70b-versatile'
+      ) {
+        set({ model: 'groq/compound-mini' });
       }
     } catch (err) {
       console.error('[hydrate] Failed to load meetings from database:', err);
@@ -375,7 +634,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const result = await window.electronAPI.dbListChatThreads();
       if (result.ok) {
-        set({ chatThreads: result.threads, isChatHydrated: true });
+        // Restore whichever thread was open before a remount (e.g. after a
+        // renderer crash/reload) rather than always landing on no thread
+        // selected — see setActiveChatThreadId for where this is persisted.
+        let restoredActiveId: string | null = null;
+        try {
+          const savedId = localStorage.getItem('mirai-active-chat-thread-id');
+          if (savedId && result.threads.some((t) => t.id === savedId)) {
+            restoredActiveId = savedId;
+          }
+        } catch {
+          // localStorage unavailable — not critical, just skip restoration
+        }
+        set({
+          chatThreads: result.threads,
+          isChatHydrated: true,
+          ...(restoredActiveId ? { activeChatThreadId: restoredActiveId } : {}),
+        });
       } else {
         console.error('[hydrate] list-chat-threads returned error:', result.error);
         set({ isChatHydrated: true });
@@ -385,7 +660,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ isChatHydrated: true });
     }
   },
-  setActiveChatThreadId: (id) => set({ activeChatThreadId: id }),
+  setActiveChatThreadId: (id) => {
+    set({ activeChatThreadId: id });
+    try {
+      if (id) localStorage.setItem('mirai-active-chat-thread-id', id);
+      else localStorage.removeItem('mirai-active-chat-thread-id');
+    } catch {
+      // ignore — persistence is a nice-to-have, not required for correctness
+    }
+  },
   createChatThread: (meetingId) => {
     const id = `thread-${Date.now()}`;
     const now = Date.now();
@@ -401,6 +684,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       chatThreads: [newThread, ...state.chatThreads],
       activeChatThreadId: id,
     }));
+    try {
+      localStorage.setItem('mirai-active-chat-thread-id', id);
+    } catch {
+      // ignore
+    }
     if (window.electronAPI?.dbCreateChatThread) {
       window.electronAPI
         .dbCreateChatThread(id, newThread.title, meetingId ?? null)
@@ -475,6 +763,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       transcript: [],
       aiNotes: '',
       aiSummary: '',
+      additionalNotes: '',
       actionItems: [],
       timeline: []
     };
@@ -485,7 +774,404 @@ export const useAppStore = create<AppState>((set, get) => ({
     persistMeeting(newMeeting);
     return id;
   },
-  createMeetingForRecording: (source?: string) => {
+  selectedRecordingTemplate: 'default',
+  setSelectedRecordingTemplate: (templateId) => set({ selectedRecordingTemplate: templateId }),
+
+  setMeetingTemplate: (meetingId, templateId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+
+        let candidateInfo = m.candidateInfo;
+        let clientInfo = m.clientInfo;
+        let recruitmentMetricsInfo = m.recruitmentMetricsInfo;
+        let hrStrategyInfo = m.hrStrategyInfo;
+        let performanceFeedbackInfo = m.performanceFeedbackInfo;
+        let teamRecapInfo = m.teamRecapInfo;
+
+        // Every template starts with EMPTY info objects — no placeholder/
+        // mock content (no fabricated candidate name, scores, comments, or
+        // fake client name/requirements). All of these are populated only
+        // by the real transcript-based AI extraction ("Auto-Score via AI" /
+        // "Extract via AI" buttons in each panel) or manual entry — never
+        // by sample data the user never actually said or typed.
+        if (templateId === 'interview' && !candidateInfo) {
+          candidateInfo = {
+            name: m.title.includes('<>') ? m.title.split('<>')[1].trim() : '',
+            role: m.title.includes('<>') ? m.title.split('<>')[0].trim() : '',
+            scorecard: [
+              { id: '1', category: 'Problem-solving Skills', score: 0, comments: '' },
+              { id: '2', category: 'Communication', score: 0, comments: '' },
+              { id: '3', category: 'Technical Depth', score: 0, comments: '' },
+              { id: '4', category: 'Culture & Alignment', score: 0, comments: '' },
+            ],
+            overallRecommendation: undefined,
+          };
+        }
+
+        if (templateId === 'client' && !clientInfo) {
+          clientInfo = {
+            clientName: '',
+            projectName: '',
+            requirements: [],
+          };
+        }
+
+        // Recruitment Metrics / HR Strategy / Performance Feedback / Team
+        // Recap intentionally start with EMPTY info objects (no placeholder/
+        // mock content) — unlike the interview/client templates above, these
+        // are meant to be populated only by the real transcript-based AI
+        // extraction or manual entry, never by fabricated sample data.
+        if (templateId === 'recruitment_metrics' && !recruitmentMetricsInfo) {
+          recruitmentMetricsInfo = { summary: '', metrics: [] };
+        }
+        if (templateId === 'hr_strategy' && !hrStrategyInfo) {
+          hrStrategyInfo = { summary: '', points: [] };
+        }
+        if (templateId === 'performance_feedback' && !performanceFeedbackInfo) {
+          performanceFeedbackInfo = { employeeName: 'Employee', role: '', summary: '', items: [] };
+        }
+        if (templateId === 'team_recap' && !teamRecapInfo) {
+          teamRecapInfo = { summary: '', highlights: [] };
+        }
+
+        const updated = {
+          ...m,
+          templateId,
+          candidateInfo,
+          clientInfo,
+          recruitmentMetricsInfo,
+          hrStrategyInfo,
+          performanceFeedbackInfo,
+          teamRecapInfo,
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  updateCandidateScorecard: (meetingId, criterionId, score, comments) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.candidateInfo) return m;
+        const updatedScorecard = m.candidateInfo.scorecard.map((c) =>
+          c.id === criterionId ? { ...c, score, comments: comments !== undefined ? comments : c.comments } : c
+        );
+        const updated = {
+          ...m,
+          candidateInfo: { ...m.candidateInfo, scorecard: updatedScorecard }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  addScorecardCriterion: (meetingId, category) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.candidateInfo) return m;
+        // Random suffix alongside Date.now() — same reasoning as
+        // addClientRequirement: guards against duplicate IDs if this is
+        // ever called more than once within the same millisecond.
+        const newCriterion = {
+          id: `criterion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          category,
+          score: undefined,
+          comments: '',
+        };
+        const updated = {
+          ...m,
+          candidateInfo: { ...m.candidateInfo, scorecard: [...m.candidateInfo.scorecard, newCriterion] }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  removeScorecardCriterion: (meetingId, criterionId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.candidateInfo) return m;
+        const updated = {
+          ...m,
+          candidateInfo: {
+            ...m.candidateInfo,
+            scorecard: m.candidateInfo.scorecard.filter((c) => c.id !== criterionId),
+          }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  updateCandidateInfo: (meetingId, candidateInfo) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.candidateInfo) return m;
+        const updated = {
+          ...m,
+          candidateInfo: { ...m.candidateInfo, ...candidateInfo }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  addClientRequirement: (meetingId, req) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const currentClientInfo = m.clientInfo || { clientName: 'Client', projectName: 'Project', requirements: [] };
+        // Random suffix (not just Date.now()) — when the AI auto-extract
+        // flow calls this in a tight loop for multiple requirements, they
+        // can all land within the same millisecond, producing duplicate IDs
+        // and a React "two children with the same key" warning/misrender.
+        const newReq = { ...req, id: `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+        const updated = {
+          ...m,
+          clientInfo: {
+            ...currentClientInfo,
+            requirements: [newReq, ...currentClientInfo.requirements]
+          }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  updateClientRequirement: (meetingId, reqId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.clientInfo) return m;
+        const updatedReqs = m.clientInfo.requirements.map((r) => r.id === reqId ? { ...r, ...updates } : r);
+        const updated = {
+          ...m,
+          clientInfo: { ...m.clientInfo, requirements: updatedReqs }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  deleteClientRequirement: (meetingId, reqId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.clientInfo) return m;
+        const updatedReqs = m.clientInfo.requirements.filter((r) => r.id !== reqId);
+        const updated = {
+          ...m,
+          clientInfo: { ...m.clientInfo, requirements: updatedReqs }
+        };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  updateClientInfo: (meetingId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.clientInfo) return m;
+        const updated = { ...m, clientInfo: { ...m.clientInfo, ...updates } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  // ── Recruitment Metrics ──────────────────────────────────────────────────
+  setRecruitmentMetricsInfo: (meetingId, info) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const updated = { ...m, recruitmentMetricsInfo: info };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  addRecruitmentMetric: (meetingId, item) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const current = m.recruitmentMetricsInfo || { summary: '', metrics: [] };
+        const newItem = { ...item, id: `metric-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+        const updated = { ...m, recruitmentMetricsInfo: { ...current, metrics: [newItem, ...current.metrics] } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  updateRecruitmentMetric: (meetingId, itemId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.recruitmentMetricsInfo) return m;
+        const metrics = m.recruitmentMetricsInfo.metrics.map((i) => i.id === itemId ? { ...i, ...updates } : i);
+        const updated = { ...m, recruitmentMetricsInfo: { ...m.recruitmentMetricsInfo, metrics } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  deleteRecruitmentMetric: (meetingId, itemId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.recruitmentMetricsInfo) return m;
+        const metrics = m.recruitmentMetricsInfo.metrics.filter((i) => i.id !== itemId);
+        const updated = { ...m, recruitmentMetricsInfo: { ...m.recruitmentMetricsInfo, metrics } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  // ── HR Strategy ───────────────────────────────────────────────────────────
+  setHrStrategyInfo: (meetingId, info) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const updated = { ...m, hrStrategyInfo: info };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  addHrStrategyPoint: (meetingId, item) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const current = m.hrStrategyInfo || { summary: '', points: [] };
+        const newItem = { ...item, id: `hrpoint-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+        const updated = { ...m, hrStrategyInfo: { ...current, points: [newItem, ...current.points] } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  updateHrStrategyPoint: (meetingId, itemId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.hrStrategyInfo) return m;
+        const points = m.hrStrategyInfo.points.map((i) => i.id === itemId ? { ...i, ...updates } : i);
+        const updated = { ...m, hrStrategyInfo: { ...m.hrStrategyInfo, points } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  deleteHrStrategyPoint: (meetingId, itemId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.hrStrategyInfo) return m;
+        const points = m.hrStrategyInfo.points.filter((i) => i.id !== itemId);
+        const updated = { ...m, hrStrategyInfo: { ...m.hrStrategyInfo, points } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  // ── Performance Feedback ─────────────────────────────────────────────────
+  setPerformanceFeedbackInfo: (meetingId, info) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const updated = { ...m, performanceFeedbackInfo: info };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  addPerformanceFeedbackItem: (meetingId, item) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const current = m.performanceFeedbackInfo || { employeeName: 'Employee', role: '', summary: '', items: [] };
+        const newItem = { ...item, id: `pf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+        const updated = { ...m, performanceFeedbackInfo: { ...current, items: [newItem, ...current.items] } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  updatePerformanceFeedbackItem: (meetingId, itemId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.performanceFeedbackInfo) return m;
+        const items = m.performanceFeedbackInfo.items.map((i) => i.id === itemId ? { ...i, ...updates } : i);
+        const updated = { ...m, performanceFeedbackInfo: { ...m.performanceFeedbackInfo, items } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  deletePerformanceFeedbackItem: (meetingId, itemId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.performanceFeedbackInfo) return m;
+        const items = m.performanceFeedbackInfo.items.filter((i) => i.id !== itemId);
+        const updated = { ...m, performanceFeedbackInfo: { ...m.performanceFeedbackInfo, items } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  // ── Team Recap ────────────────────────────────────────────────────────────
+  setTeamRecapInfo: (meetingId, info) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const updated = { ...m, teamRecapInfo: info };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  addTeamRecapHighlight: (meetingId, item) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const current = m.teamRecapInfo || { summary: '', highlights: [] };
+        const newItem = { ...item, id: `recap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+        const updated = { ...m, teamRecapInfo: { ...current, highlights: [newItem, ...current.highlights] } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  updateTeamRecapHighlight: (meetingId, itemId, updates) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.teamRecapInfo) return m;
+        const highlights = m.teamRecapInfo.highlights.map((i) => i.id === itemId ? { ...i, ...updates } : i);
+        const updated = { ...m, teamRecapInfo: { ...m.teamRecapInfo, highlights } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  deleteTeamRecapHighlight: (meetingId, itemId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.teamRecapInfo) return m;
+        const highlights = m.teamRecapInfo.highlights.filter((i) => i.id !== itemId);
+        const updated = { ...m, teamRecapInfo: { ...m.teamRecapInfo, highlights } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  createMeetingForRecording: (source?: string, overrideTemplate?: MeetingTemplateId) => {
+    const templateId = overrideTemplate || get().selectedRecordingTemplate || 'default';
     const id = `meeting-${Date.now()}`;
     const now = new Date();
     const dateLabel = now.toLocaleDateString('en-US', {
@@ -494,20 +1180,62 @@ export const useAppStore = create<AppState>((set, get) => ({
       day: 'numeric',
     });
     const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const title = source ? `${source} — ${timeLabel}` : `Meeting — ${timeLabel}`;
+    
+    let defaultTitle = `Meeting — ${timeLabel}`;
+    if (templateId === 'interview') defaultTitle = `PM Interview <> Candidate`;
+    else if (templateId === 'client') defaultTitle = `Client Alignment Sync — ${timeLabel}`;
+    else if (templateId === 'recruitment_metrics') defaultTitle = `Recruitment Sync — ${timeLabel}`;
+    else if (templateId === 'hr_strategy') defaultTitle = `HR Strategy Meeting — ${timeLabel}`;
+    else if (templateId === 'performance_feedback') defaultTitle = `Performance Review — ${timeLabel}`;
+    else if (templateId === 'team_recap') defaultTitle = `Team Sync — ${timeLabel}`;
+    else if (source) defaultTitle = `${source} — ${timeLabel}`;
+
     const newMeeting: Meeting = {
       id,
-      title,
+      title: defaultTitle,
       date: dateLabel,
       time: timeLabel,
       duration: '0m',
-      preview: 'Recording in progress…',
+      preview: 'No summary generated yet.',
       participants: ['You'],
       transcript: [],
       aiNotes: '',
       aiSummary: '',
+      additionalNotes: '',
       actionItems: [],
       timeline: [],
+      templateId,
+      createdAt: Date.now(),
+      // Every template starts with EMPTY info objects — no placeholder/mock
+      // content. Populated only by the real transcript-based AI extraction
+      // (the "Auto-Score via AI" / "Extract via AI" button in each panel)
+      // or manual entry, never by fabricated sample data.
+      candidateInfo: templateId === 'interview' ? {
+        name: '',
+        role: '',
+        scorecard: [
+          { id: '1', category: 'Problem-solving Skills', score: 0, comments: '' },
+          { id: '2', category: 'Communication', score: 0, comments: '' },
+          { id: '3', category: 'Technical Depth', score: 0, comments: '' },
+          { id: '4', category: 'Culture & Alignment', score: 0, comments: '' },
+        ],
+        overallRecommendation: undefined,
+      } : undefined,
+      clientInfo: templateId === 'client' ? {
+        clientName: '',
+        projectName: '',
+        requirements: [],
+      } : undefined,
+      // Recruitment Metrics / HR Strategy / Performance Feedback / Team
+      // Recap start with EMPTY info objects — no placeholder/mock content.
+      // They are populated only by the real transcript-based AI extraction
+      // (the "Extract via AI" button in each panel) or manual entry.
+      recruitmentMetricsInfo: templateId === 'recruitment_metrics' ? { summary: '', metrics: [] } : undefined,
+      hrStrategyInfo: templateId === 'hr_strategy' ? { summary: '', points: [] } : undefined,
+      performanceFeedbackInfo: templateId === 'performance_feedback'
+        ? { employeeName: 'Employee', role: '', summary: '', items: [] }
+        : undefined,
+      teamRecapInfo: templateId === 'team_recap' ? { summary: '', highlights: [] } : undefined,
     };
     set((state) => ({
       meetings: [newMeeting, ...state.meetings],
@@ -534,31 +1262,133 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (updated) persistActionItems(meetingId, updated.actionItems);
   },
   deleteMeeting: (id) => {
-    set((state) => ({
-      meetings: state.meetings.filter((meeting) => meeting.id !== id),
-      activeMeetingId: state.activeMeetingId === id ? null : state.activeMeetingId
-    }));
+    set((state) => {
+      const target = state.meetings.find((meeting) => meeting.id === id);
+      const deletedEntry = target ? { ...target, deletedAt: Date.now() } : undefined;
+      return {
+        meetings: state.meetings.filter((meeting) => meeting.id !== id),
+        activeMeetingId: state.activeMeetingId === id ? null : state.activeMeetingId,
+        // Move into the in-memory Bin immediately so the UI reflects it
+        // right away, even before hydrateBinFromDb() has ever run.
+        deletedMeetings: deletedEntry ? [deletedEntry, ...state.deletedMeetings] : state.deletedMeetings,
+      };
+    });
     persistDeleteMeeting(id);
+  },
+
+  deletedMeetings: [],
+  isBinHydrated: false,
+  hydrateBinFromDb: async () => {
+    if (!window.electronAPI?.dbListDeletedMeetings) {
+      set({ isBinHydrated: true });
+      return;
+    }
+    try {
+      const result = await window.electronAPI.dbListDeletedMeetings();
+      if (result.ok) {
+        set({
+          deletedMeetings: result.meetings.map((m) => ({
+            id: m.id,
+            title: m.title,
+            date: m.date,
+            time: m.time,
+            duration: m.duration,
+            preview: m.preview,
+            participants: m.participants,
+            transcript: m.transcript,
+            aiNotes: m.aiNotes,
+            aiSummary: m.aiSummary,
+            additionalNotes: m.additionalNotes ?? '',
+            actionItems: m.actionItems,
+            timeline: m.timeline,
+            deletedAt: m.deletedAt ?? undefined,
+            createdAt: m.createdAt,
+          })),
+          isBinHydrated: true,
+        });
+      } else {
+        console.error('[hydrate] list-deleted-meetings returned error:', result.error);
+        set({ isBinHydrated: true });
+      }
+    } catch (err) {
+      console.error('[hydrate] list-deleted-meetings failed:', err);
+      set({ isBinHydrated: true });
+    }
+  },
+  restoreMeeting: (id) => {
+    set((state) => {
+      const target = state.deletedMeetings.find((meeting) => meeting.id === id);
+      if (!target) return {};
+      const { deletedAt: _deletedAt, ...restored } = target;
+
+      // Re-insert in newest-first order by createdAt (matching the DB's own
+      // sort in listMeetings()) instead of always prepending — otherwise a
+      // restored meeting from days ago would jump to the top of Home ahead
+      // of genuinely newer meetings.
+      const restoredCreatedAt = restored.createdAt ?? 0;
+      const insertIndex = state.meetings.findIndex((m) => (m.createdAt ?? 0) < restoredCreatedAt);
+      const nextMeetings =
+        insertIndex === -1
+          ? [...state.meetings, restored]
+          : [...state.meetings.slice(0, insertIndex), restored, ...state.meetings.slice(insertIndex)];
+
+      return {
+        deletedMeetings: state.deletedMeetings.filter((meeting) => meeting.id !== id),
+        meetings: nextMeetings,
+      };
+    });
+    persistRestoreMeeting(id);
+  },
+  permanentlyDeleteMeeting: (id) => {
+    // Normally called on an entry already in the Bin, but also handles
+    // being called directly on a still-active meeting (e.g. RecordingController
+    // discarding a meeting record it just created when mic access fails) —
+    // removing from both lists keeps this safe either way.
+    set((state) => ({
+      deletedMeetings: state.deletedMeetings.filter((meeting) => meeting.id !== id),
+      meetings: state.meetings.filter((meeting) => meeting.id !== id),
+    }));
+    persistPermanentlyDeleteMeeting(id);
   },
   appendTranscriptLine: (meetingId, line) => {
     set((state) => ({
       meetings: state.meetings.map((meeting) => {
         if (meeting.id === meetingId) {
+          const rawSpeaker = line.speaker?.trim() || 'Speaker';
+          const speakerName = rawSpeaker === 'You' ? 'You' : (rawSpeaker === 'Speaker' ? 'Other Participant' : rawSpeaker);
+          const currentParticipants = meeting.participants && meeting.participants.length > 0 ? meeting.participants : ['You'];
+          const nextParticipants = currentParticipants.includes(speakerName)
+            ? currentParticipants
+            : [...currentParticipants, speakerName];
+
           return {
             ...meeting,
-            transcript: [...meeting.transcript, line]
+            transcript: [...meeting.transcript, line],
+            participants: nextParticipants,
           };
         }
         return meeting;
       })
     }));
     persistTranscriptLine(meetingId, line);
+    const updated = get().meetings.find((m) => m.id === meetingId);
+    if (updated) persistMeeting(updated);
   },
   // AI Summary
   updateAiSummary: (meetingId, summary) => {
     set((state) => ({
       meetings: state.meetings.map((m) =>
         m.id === meetingId ? { ...m, aiSummary: summary } : m
+      )
+    }));
+    const updated = get().meetings.find((m) => m.id === meetingId);
+    if (updated) persistMeeting(updated);
+  },
+
+  updateAdditionalNotes: (meetingId, notes) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) =>
+        m.id === meetingId ? { ...m, additionalNotes: notes } : m
       )
     }));
     const updated = get().meetings.find((m) => m.id === meetingId);
@@ -637,19 +1467,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Settings State variables
-  provider: 'OpenAI',
+  provider: 'Groq',
   setProvider: (provider) => {
     set((state) => {
-      const cached = state.cachedModels[provider] || [];
+      const cached = (state.cachedModels[provider] && state.cachedModels[provider].length > 0)
+        ? state.cachedModels[provider]
+        : (DEFAULT_PROVIDER_MODELS[provider] || []);
+      const chosenModel = cached.includes(state.model) && !state.model.includes('qwen')
+        ? state.model
+        : (cached[0] || '');
+
       return {
         provider,
         availableModels: cached,
-        model: cached[0] || '',
+        model: chosenModel,
         connectionStatus: cached.length > 0 ? 'success' : 'idle'
       };
     });
   },
-  model: '',
+  model: 'llama-3.3-70b-versatile',
   setModel: (model) => set({ model }),
   apiKeys: {
     'OpenAI': '',
@@ -734,6 +1570,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Recording State variables
   recordingStatus: 'idle',
   setRecordingStatus: (recordingStatus) => set({ recordingStatus }),
+  isMicMuted: false,
+  setIsMicMuted: (isMicMuted) => set({ isMicMuted }),
+  toggleMicMute: () => set((state) => ({ isMicMuted: !state.isMicMuted })),
   recordingDuration: 0,
   setRecordingDuration: (recordingDuration) => set({ recordingDuration }),
   incrementRecordingDuration: () => set((state) => ({ recordingDuration: state.recordingDuration + 1 })),
@@ -747,6 +1586,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTranscriptionStatus: (transcriptionStatus) => set({ transcriptionStatus }),
   lastTranscriptionError: null,
   setLastTranscriptionError: (lastTranscriptionError) => set({ lastTranscriptionError }),
+  micDeviceWarning: null,
+  setMicDeviceWarning: (micDeviceWarning) => set({ micDeviceWarning }),
+  systemAudioWarning: null,
+  setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
   streamState: 'disconnected',
   setStreamState: (streamState) => set({ streamState }),
   activeSessionId: null,
@@ -815,6 +1658,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     detectedMeeting: state.detectedMeeting?.id === meetingId ? null : state.detectedMeeting,
     isMeetingNotificationVisible: state.detectedMeeting?.id === meetingId ? false : state.isMeetingNotificationVisible
   })),
+  clearDismissedMeeting: (meetingId) => set((state) => {
+    if (!state.dismissedMeetingIds.has(meetingId)) return {};
+    const next = new Set(state.dismissedMeetingIds);
+    next.delete(meetingId);
+    return { dismissedMeetingIds: next };
+  }),
   isMeetingNotificationVisible: false,
   setMeetingNotificationVisible: (isMeetingNotificationVisible) => set({ isMeetingNotificationVisible })
 }));

@@ -1,146 +1,337 @@
-import type { LiveTranscriptionOptions, TranscriptEvent } from './AIProvider';
+import type { LiveTranscriptionOptions, TranscriptEvent, SpeakerTrack } from './AIProvider';
 import { ProviderManager } from './ProviderManager';
-
-/** How many seconds of audio to batch before sending to Whisper */
-const BATCH_SECONDS = 6;
 
 /**
  * Minimum RMS level to consider a chunk as "containing speech".
- * Raised from an earlier, too-sensitive 0.005 — that level let faint mic
- * hiss/room hum through, and Whisper reliably hallucinates fluent-sounding
- * text (repeated syllables, stock phrases like "Thank you.") on silent or
- * near-silent audio. This is a well-documented Whisper failure mode, not
- * specific to this app — see OpenAI's own community forum on the topic.
+ * This is a floor only — actual speech onset also requires the chunk to
+ * clear the adaptive noise floor (see NOISE_FLOOR_MARGIN below), so real
+ * ambient noise levels above this constant don't cause false triggers.
  */
 const SPEECH_THRESHOLD = 0.012;
 
-/** Common short phrases Whisper hallucinates on silence/noise, independent of language. */
+/**
+ * How far above the rolling ambient noise floor a chunk's RMS must be to
+ * count as real speech onset, expressed as a multiplier. Fixed thresholds
+ * fail differently for every room/mic (too loose in noisy rooms, too tight
+ * in quiet ones); tracking the actual noise floor and requiring a clear
+ * margin above it is far more robust to sustained background noise (fans,
+ * hum, HVAC) that would otherwise flicker across a fixed RMS constant.
+ */
+const NOISE_FLOOR_MARGIN = 2.2;
+
+/** Silence chunks before triggering sentence flush (7 chunks * ~93ms ≈ 650ms) */
+const SILENCE_LIMIT_CHUNKS = 7;
+
+/**
+ * Minimum speech chunks required to trigger a sentence (4 chunks * ~93ms ≈ 370ms).
+ * Kept short for responsiveness — hallucination on noise is now primarily guarded
+ * against by the adaptive noise-floor gate at speech onset (NOISE_FLOOR_MARGIN)
+ * and the peak-energy check in hasSpeech(), rather than by delaying every flush.
+ */
+const MIN_SPEECH_CHUNKS = 4;
+
+/** Maximum speech chunks before forced flush (85 chunks * ~93ms ≈ 8.0s) */
+const MAX_SPEECH_CHUNKS = 85;
+
+/** Number of pre-roll chunks to prepend to avoid cutting off the first syllable */
+const PRE_ROLL_CHUNKS = 3;
+
+/**
+ * Result shape every provider's transcribeFn now returns, instead of a bare
+ * string. `confidence` is the provider's own model-reported confidence for
+ * the clip (Whisper: derived from avg_logprob/no_speech_prob; Deepgram/
+ * AssemblyAI: their native per-word/utterance confidence). Optional because
+ * a provider that genuinely has no confidence signal can omit it — the
+ * gate below only activates when a number is actually present, so it never
+ * makes filtering stricter for a provider that can't supply the signal.
+ */
+export interface TranscribeResult {
+  text: string;
+  confidence?: number;
+}
+
+/**
+ * Minimum model-reported confidence to accept a transcribed clip. Below
+ * this, the clip is dropped the same way a pattern-matched hallucination
+ * is — this is a strictly *additional* signal on top of the existing
+ * heuristics, not a replacement, since not every provider/clip will have a
+ * usable confidence value.
+ */
+const MIN_ACCEPT_CONFIDENCE = 0.20;
+
+/** Max characters of prior transcript kept as rolling context for the next Whisper call */
+const PROMPT_CONTEXT_MAX_CHARS = 200;
+
+/** Common short phrases Whisper hallucinates on silence/noise across languages */
 const HALLUCINATION_PHRASES = [
   'thank you',
   'thanks for watching',
   'thank you for watching',
   'please subscribe',
   "you're welcome",
-  '감사합니다', // "thank you" (Korean) — appears in the observed hallucination log
-  '안녕히 계세요', // "goodbye" (Korean)
+  'grazie a tutti',
+  'grazie',
+  'obrigado',
+  'obrigada',
+  '감사합니다',
+  '안녕히 계세요',
+  'subtitles by',
+  'subtitle by',
+  'translated by',
+  'watching',
 ];
+
+interface TrackVADState {
+  speakerLabel: SpeakerTrack;
+  preRollBuffer: Float32Array[];
+  speechBuffer: Float32Array[];
+  isSpeaking: boolean;
+  speechChunksCount: number;
+  silenceChunksCount: number;
+  /**
+   * Rolling estimate of ambient noise RMS, updated only while idle (not
+   * speaking). Speech onset requires a chunk's RMS to clear both the fixed
+   * SPEECH_THRESHOLD floor AND noiseFloor * NOISE_FLOOR_MARGIN, so the
+   * detector self-calibrates to the room's actual noise level instead of
+   * relying solely on one constant that's wrong for most environments.
+   */
+  noiseFloor: number;
+}
 
 /**
  * LiveTranscriptionEngine
  *
- * Replaces MockStreamEngine for providers that support real speech-to-text.
- *
- * Strategy:
- *  - Collects PCM Float32 chunks from the AudioCapture ScriptProcessorNode.
- *  - Every BATCH_SECONDS, encodes the buffered samples as a WAV Blob.
- *  - Sends the Blob to the provider's transcription endpoint.
- *  - Emits a TranscriptEvent for each completed batch.
- *  - Errors on individual batches are logged but never stop recording.
- *
- * This engine is PASSIVE — it never touches MediaStream directly.
- * The RecordingController feeds raw Float32Array chunks via processChunk().
- *
- * Providers that use this engine:
- *   OpenAI  → /v1/audio/transcriptions  (whisper-1)
- *   Groq    → /openai/v1/audio/transcriptions  (whisper-large-v3)
- *
- * Non-STT providers (Gemini, Anthropic, AWS, OpenRouter, Ollama, Custom)
- * keep their existing no-op / throw implementations — this engine is not used.
+ * Implements intelligent Dual-Track VAD (Voice Activity Detection) for live speech:
+ *  - Track 1 (Microphone): Tagged as 'You'
+ *  - Track 2 (Desktop Loopback): Tagged as 'Speaker' (Other Participants)
+ *  - Utterances are dynamically flushed on natural sentence pauses (650ms silence).
  */
 export class LiveTranscriptionEngine {
   private options?: LiveTranscriptionOptions;
-  private pendingChunks: Float32Array[] = [];
   private sampleRate = 44100;
-  private batchIntervalId: ReturnType<typeof setInterval> | null = null;
   private sequenceId = 0;
   private sessionStartMs = 0;
   private isRunning = false;
 
-  /** Tracks the last accepted transcript text + how many consecutive batches
-   *  produced an identical (or near-identical) result — repeated identical
-   *  short phrases across consecutive silent batches is a hallucination
-   *  signature (e.g. "Thank you." on every batch during a silent stretch). */
-  private lastAcceptedText = '';
-  private consecutiveRepeatCount = 0;
+  private micTrack: TrackVADState = {
+    speakerLabel: 'You',
+    preRollBuffer: [],
+    speechBuffer: [],
+    isSpeaking: false,
+    speechChunksCount: 0,
+    silenceChunksCount: 0,
+    noiseFloor: SPEECH_THRESHOLD,
+  };
 
-  /** The actual API call — injected so OpenAI and Groq can provide their own impl */
-  private transcribeFn?: (blob: Blob) => Promise<string>;
+  private systemTrack: TrackVADState = {
+    speakerLabel: 'Speaker',
+    preRollBuffer: [],
+    speechBuffer: [],
+    isSpeaking: false,
+    speechChunksCount: 0,
+    silenceChunksCount: 0,
+    noiseFloor: SPEECH_THRESHOLD,
+  };
 
   /**
-   * @param transcribeFn  Function that accepts a WAV Blob and returns transcript text.
-   *                      Implemented per-provider in OpenAIProvider / GroqProvider.
-   * @param sampleRate    Audio sample rate (default 44100)
+   * Per-speaker last-accepted-text state for Pattern 3 below. Previously this
+   * was two flat fields shared across BOTH tracks — since the mic ("You") and
+   * system ("Speaker") tracks run as fully independent VAD state machines and
+   * their flushes interleave in delivery order, a shared single "last text"
+   * meant a repeat from one speaker could mask (or fail to catch) a genuine
+   * repeat from the other. This is especially relevant without headphones,
+   * where mic/system cross-talk bleed increases the odds of near-simultaneous
+   * near-duplicate text arriving from both tracks.
    */
+  private lastAcceptedTextBySpeaker = new Map<string, string>();
+  private consecutiveRepeatCountBySpeaker = new Map<string, number>();
+
+  /**
+   * Rolling context passed to Whisper's `prompt` field on the NEXT call, so
+   * each ~1-8s clip is no longer transcribed with zero memory of what was
+   * just said. This costs nothing extra — it rides along on the same single
+   * request that was already going to be made, so it adds no latency to
+   * live transcript display. Capped in length (see acceptPromptContext)
+   * since Whisper only uses the prompt's final ~224 tokens anyway and a
+   * longer string just costs upload bytes for no benefit.
+   */
+  private promptContext = '';
+
+  /** The actual API call injected by OpenAIProvider / GroqProvider */
+  private transcribeFn?: (blob: Blob, promptContext?: string) => Promise<TranscribeResult>;
+
   constructor(
-    transcribeFn?: (blob: Blob) => Promise<string>,
+    transcribeFn?: (blob: Blob, promptContext?: string) => Promise<TranscribeResult>,
     sampleRate = 44100
   ) {
     this.transcribeFn = transcribeFn;
     this.sampleRate = sampleRate;
   }
 
-  // ── Public API (matches the interface used by providers) ─────────────────
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   async start(options: LiveTranscriptionOptions): Promise<void> {
     if (this.isRunning) return;
     this.options = options;
-    this.pendingChunks = [];
     this.sequenceId = 0;
     this.sessionStartMs = Date.now();
     this.isRunning = true;
-    this.lastAcceptedText = '';
-    this.consecutiveRepeatCount = 0;
+    this.lastAcceptedTextBySpeaker.clear();
+    this.consecutiveRepeatCountBySpeaker.clear();
+    this.promptContext = '';
 
-    // Flush whatever has been buffered every BATCH_SECONDS
-    this.batchIntervalId = setInterval(
-      () => this.flushBatch(),
-      BATCH_SECONDS * 1000
-    );
+    this.resetTrack(this.micTrack);
+    this.resetTrack(this.systemTrack);
   }
 
   async stop(): Promise<void> {
     this.isRunning = false;
-    if (this.batchIntervalId !== null) {
-      clearInterval(this.batchIntervalId);
-      this.batchIntervalId = null;
-    }
-    // Flush any remaining audio that hasn't been sent yet
-    if (this.pendingChunks.length > 0) {
-      await this.flushBatch();
-    }
-    this.pendingChunks = [];
+    // Flush any pending speech buffers on stop
+    await this.flushTrackIfSpeech(this.micTrack);
+    await this.flushTrackIfSpeech(this.systemTrack);
+    this.resetTrack(this.micTrack);
+    this.resetTrack(this.systemTrack);
   }
 
   /**
-   * Receive a PCM chunk from AudioCapture's ScriptProcessorNode.
-   * Called on every onaudioprocess event (4096 samples ≈ 93ms at 44100Hz).
+   * Process a PCM audio chunk through the VAD state machine for the given speaker track.
    */
-  async processChunk(chunk: Float32Array): Promise<void> {
+  async processChunk(chunk: Float32Array, speakerTrack: SpeakerTrack = 'You'): Promise<void> {
     if (!this.isRunning) return;
-    this.pendingChunks.push(chunk);
+
+    const track = speakerTrack === 'Speaker' ? this.systemTrack : this.micTrack;
+
+    // Calculate RMS volume level for this 93ms chunk
+    let sum = 0;
+    for (let i = 0; i < chunk.length; i++) {
+      sum += chunk[i] * chunk[i];
+    }
+    const rms = Math.sqrt(sum / chunk.length);
+
+    // Speech onset requires clearing BOTH the fixed floor and a clear margin
+    // above the rolling noise floor. While already speaking, a slightly
+    // lower bar (no margin) is used so a real sentence's natural volume dips
+    // don't get chopped into fragments — only the onset decision needs to be
+    // strict, since the noise floor is exactly what we're trying to reject
+    // at the point where a false trigger would start a whole clip.
+    const onsetThreshold = Math.max(SPEECH_THRESHOLD, track.noiseFloor * NOISE_FLOOR_MARGIN);
+    const hasVoice = track.isSpeaking ? rms >= SPEECH_THRESHOLD : rms >= onsetThreshold;
+
+    if (hasVoice) {
+      if (!track.isSpeaking) {
+        // Speech onset: include pre-roll chunks so the first consonant isn't clipped
+        track.isSpeaking = true;
+        track.speechBuffer = [...track.preRollBuffer, chunk];
+        track.speechChunksCount = 1;
+        track.silenceChunksCount = 0;
+      } else {
+        track.speechBuffer.push(chunk);
+        track.speechChunksCount++;
+        track.silenceChunksCount = 0;
+
+        // Long speech cap: if continuous talking exceeds MAX_SPEECH_CHUNKS (~8.0s), flush sentence
+        if (track.speechBuffer.length >= MAX_SPEECH_CHUNKS) {
+          await this.flushTrack(track);
+        }
+      }
+    } else {
+      if (track.isSpeaking) {
+        track.silenceChunksCount++;
+        track.speechBuffer.push(chunk); // keep natural trail
+
+        // Natural pause detected (e.g. ~650ms of silence after speaking)
+        if (track.silenceChunksCount >= SILENCE_LIMIT_CHUNKS) {
+          if (track.speechChunksCount >= MIN_SPEECH_CHUNKS) {
+            await this.flushTrack(track);
+          } else {
+            // Below min speech length (e.g. short click or mic tap) — discard
+            track.speechBuffer = [];
+            track.isSpeaking = false;
+            track.speechChunksCount = 0;
+            track.silenceChunksCount = 0;
+          }
+        }
+      } else {
+        // Idle: this chunk is genuinely ambient noise (below the fixed
+        // floor already, or it would have triggered onset above) — use it
+        // to slowly calibrate the rolling noise floor to the room's actual
+        // level. Exponential moving average smooths out one-off spikes
+        // (a door closing, a single cough) so they don't permanently raise
+        // the floor and make the detector deaf to real speech afterward.
+        const NOISE_FLOOR_EMA_ALPHA = 0.05;
+        track.noiseFloor = track.noiseFloor + NOISE_FLOOR_EMA_ALPHA * (rms - track.noiseFloor);
+
+        // Idle: update rolling pre-roll buffer
+        track.preRollBuffer.push(chunk);
+        if (track.preRollBuffer.length > PRE_ROLL_CHUNKS) {
+          track.preRollBuffer.shift();
+        }
+      }
+    }
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
 
-  private async flushBatch(): Promise<void> {
-    if (!this.options || this.pendingChunks.length === 0) return;
+  private resetTrack(track: TrackVADState): void {
+    track.preRollBuffer = [];
+    track.speechBuffer = [];
+    track.isSpeaking = false;
+    track.speechChunksCount = 0;
+    track.silenceChunksCount = 0;
+  }
 
-    // Snapshot and clear the buffer atomically
-    const chunks = this.pendingChunks.splice(0);
+  private async flushTrackIfSpeech(track: TrackVADState): Promise<void> {
+    if (track.speechBuffer.length >= MIN_SPEECH_CHUNKS) {
+      await this.flushTrack(track);
+    }
+  }
 
-    // Skip if entirely silent (below speech threshold)
-    if (!this.hasSpeech(chunks)) return;
+  private async flushTrack(track: TrackVADState): Promise<void> {
+    if (!this.options || track.speechBuffer.length === 0) return;
+
+    const chunks = track.speechBuffer.splice(0);
+    track.isSpeaking = false;
+    track.speechChunksCount = 0;
+    track.silenceChunksCount = 0;
+
+    if (!this.hasSpeech(chunks, track.noiseFloor)) return;
+
+    // Approximate real audio duration of this clip — used to sanity-check
+    // whether the returned text is even plausible for how much audio was sent.
+    const clipDurationSec = chunks.length * 0.093;
 
     try {
       const blob = this.encodePcmToWav(chunks, this.sampleRate);
-      const text = (await this.callTranscription(blob)).trim();
+      const result = await this.callTranscription(blob, this.promptContext);
+      const text = result.text.trim();
 
       if (!text) return;
 
-      if (this.looksLikeHallucination(text)) {
-        console.warn('[LiveTranscriptionEngine] Discarded likely hallucinated text:', text);
+      // Model-reported confidence gate — only enforced when the provider
+      // actually supplied a value. This runs before the pattern-based
+      // hallucination check since a low-confidence clip is often exactly
+      // the kind of noise/silence artifact that check exists to catch, and
+      // rejecting on the model's own signal is more reliable than pattern
+      // matching when it's available.
+      if (result.confidence !== undefined && result.confidence < MIN_ACCEPT_CONFIDENCE) {
+        console.warn(
+          `[LiveTranscriptionEngine] Discarded low-confidence clip for [${track.speakerLabel}] ` +
+          `(confidence=${result.confidence.toFixed(2)}):`, text
+        );
         return;
       }
+
+      if (this.looksLikeHallucination(text, track.speakerLabel, clipDurationSec)) {
+        console.warn(`[LiveTranscriptionEngine] Discarded hallucination for [${track.speakerLabel}]:`, text);
+        return;
+      }
+
+      // Feed this accepted text forward as context for the NEXT Whisper
+      // call on this session (shared across both tracks — it's just prior
+      // conversational context, not per-speaker state). Capped so the
+      // prompt doesn't grow unbounded across a long meeting; Whisper only
+      // attends to the tail of a long prompt anyway.
+      this.promptContext = `${this.promptContext} ${text}`.trim().slice(-PROMPT_CONTEXT_MAX_CHARS);
 
       // Calculate elapsed time for the timestamp badge
       const elapsedMs = Date.now() - this.sessionStartMs;
@@ -151,35 +342,28 @@ export class LiveTranscriptionEngine {
 
       const event: TranscriptEvent = {
         text: text.trim(),
-        speaker: 'You',          // Speaker diarisation is not available in Whisper batch mode
+        speaker: track.speakerLabel,
         timestamp,
         isPartial: false,
-        confidence: 0.95,
+        confidence: result.confidence ?? 0.95,
         segmentId: `seg-${Date.now()}-${this.sequenceId}`,
         sequenceId: this.sequenceId++,
-        audioStartTime: Math.max(0, totalSec - BATCH_SECONDS),
+        audioStartTime: Math.max(0, totalSec - Math.floor(chunks.length * 0.093)),
         audioEndTime: totalSec,
       };
 
       this.options.onTranscriptUpdate(event);
     } catch (err) {
-      // Log but never propagate — recording must continue even if a batch fails
-      console.warn('[LiveTranscriptionEngine] Batch transcription failed (recording continues):', err);
+      console.warn(`[LiveTranscriptionEngine] VAD transcription failed for [${track.speakerLabel}]:`, err);
       this.options.onError(err);
     }
   }
 
-  private async callTranscription(blob: Blob): Promise<string> {
+  private async callTranscription(blob: Blob, promptContext: string): Promise<TranscribeResult> {
     if (this.transcribeFn) {
       try {
-        return await this.transcribeFn(blob);
+        return await this.transcribeFn(blob, promptContext);
       } catch (primaryError) {
-        // Automatic fallback: if the active provider's transcription call
-        // fails for ANY reason (invalid/expired key, rate limit, transient
-        // network error, etc), retry this exact batch through Deepgram
-        // before giving up — but only if the user has saved a Deepgram key.
-        // Silently does nothing extra if no Deepgram key exists, so users
-        // who haven't opted in see the original error exactly as before.
         const deepgram = ProviderManager.getFallbackDeepgramProvider();
         if (!deepgram) throw primaryError;
 
@@ -188,85 +372,101 @@ export class LiveTranscriptionEngine {
           primaryError
         );
         try {
-          return await deepgram.transcribeAudio(blob);
+          const text = await deepgram.transcribeAudio(blob);
+          return { text };
         } catch (fallbackError) {
           console.warn('[LiveTranscriptionEngine] Deepgram fallback also failed:', fallbackError);
-          // Surface the ORIGINAL error, not the fallback's — the user's
-          // active provider is what they expect to see diagnostics for.
           throw primaryError;
         }
       }
     }
-    // Should not reach here — only called when transcribeFn is provided
     throw new Error('No transcription function configured.');
   }
 
-  /** Returns true if the chunk array contains audio above the speech threshold */
-  private hasSpeech(chunks: Float32Array[]): boolean {
+  private hasSpeech(chunks: Float32Array[], noiseFloor: number): boolean {
+    let speechCount = 0;
+    let peakRms = 0;
     for (const chunk of chunks) {
       let sum = 0;
       for (let i = 0; i < chunk.length; i++) {
         sum += chunk[i] * chunk[i];
       }
       const rms = Math.sqrt(sum / chunk.length);
-      if (rms > SPEECH_THRESHOLD) return true;
+      if (rms >= SPEECH_THRESHOLD) {
+        speechCount++;
+      }
+      if (rms > peakRms) peakRms = rms;
     }
-    return false;
+    // Must contain at least MIN_SPEECH_CHUNKS (~370ms) of active voice audio...
+    if (speechCount < MIN_SPEECH_CHUNKS) return false;
+    // ...AND at least one chunk that clearly peaks above the room's actual
+    // noise floor. Sustained background noise (fan, HVAC, hum) can drift
+    // above the fixed SPEECH_THRESHOLD constant for a stretch without ever
+    // producing a real, sharp speech-like peak — this rejects that clip
+    // before it ever reaches Whisper, rather than relying on Whisper to
+    // recognize silence/noise on its own (it rarely does).
+    return peakRms >= noiseFloor * NOISE_FLOOR_MARGIN;
   }
 
-  /**
-   * Heuristic check for Whisper's well-documented hallucination patterns on
-   * silent/near-silent audio: repeated single syllables ("바-바-바-바-..."),
-   * or the same short stock phrase repeating across consecutive batches
-   * ("Thank you." on batch after batch with nothing actually said).
-   *
-   * This is a heuristic, not a guarantee — it targets the specific patterns
-   * observed in practice rather than attempting general hallucination
-   * detection (which even dedicated research models struggle with).
-   */
-  private looksLikeHallucination(text: string): boolean {
+  private looksLikeHallucination(text: string, speakerLabel: string, clipDurationSec?: number): boolean {
     const normalized = text.toLowerCase().trim();
 
-    // Pattern 1: repeated syllable/word chains like "바-바-바-바-바..." or
-    // "la la la la la" — a single short token (≤4 chars) repeated 5+ times,
-    // optionally separated by hyphens or spaces.
+    // Pattern 0: implausible length for how much audio was actually sent.
+    // Natural speech runs at roughly 2-3 words/second; a real 700ms clip
+    // cannot legitimately contain a fluent multi-clause sentence. When
+    // Whisper is fed a short or ambiguous clip it will often "fill in" a
+    // plausible-sounding, fabricated sentence rather than return little/no
+    // text — this catches that class of hallucination even when the wording
+    // looks coherent and isn't a known filler phrase.
+    if (clipDurationSec !== undefined) {
+      const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+      const maxPlausibleWords = Math.max(3, Math.ceil(clipDurationSec * 3.5));
+      if (wordCount > maxPlausibleWords) {
+        return true;
+      }
+    }
+
+    // Pattern 1: repeated single syllable / word chains (e.g. "la la la la la", "thank you thank you")
     const repeatedTokenMatch = normalized.match(/^([\p{L}]{1,4})([\s-]+\1){4,}/u);
     if (repeatedTokenMatch) {
-      this.lastAcceptedText = '';
-      this.consecutiveRepeatCount = 0;
+      this.lastAcceptedTextBySpeaker.set(speakerLabel, '');
+      this.consecutiveRepeatCountBySpeaker.set(speakerLabel, 0);
       return true;
     }
 
-    // Pattern 2: the exact same short (<=6 word) phrase repeating across
-    // consecutive batches — legitimate speech almost never repeats verbatim
-    // batch after batch, but silence-triggered hallucinations often do.
-    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-    const isShortPhrase = wordCount > 0 && wordCount <= 6;
-    const isKnownFillerPhrase = HALLUCINATION_PHRASES.some((p) => normalized === p || normalized === p + '.');
-
-    if (isShortPhrase && normalized === this.lastAcceptedText) {
-      this.consecutiveRepeatCount++;
-      // Allow the phrase through once (people do say "Thank you." for real),
-      // but suppress the 2nd+ consecutive identical occurrence — and suppress
-      // immediately if it's also a known filler phrase Whisper favours.
-      if (this.consecutiveRepeatCount >= 1 && isKnownFillerPhrase) return true;
-      if (this.consecutiveRepeatCount >= 2) return true;
-    } else {
-      this.consecutiveRepeatCount = 0;
+    // Pattern 2: known single filler phrases (e.g. "Thank you.", "Grazie a tutti.", "Obrigado.")
+    const cleanPunctuation = normalized.replace(/[.,!?;:]/g, '').trim();
+    const isKnownFillerPhrase = HALLUCINATION_PHRASES.some((p) => cleanPunctuation === p || cleanPunctuation.startsWith(p));
+    if (isKnownFillerPhrase) {
+      return true;
     }
 
-    this.lastAcceptedText = normalized;
+    // Pattern 3: the exact same short phrase repeating across consecutive
+    // utterances FROM THE SAME SPEAKER TRACK. Tracked per-speaker (not
+    // globally) since the mic and system tracks are independent state
+    // machines whose flushes interleave — a shared "last text" could miss a
+    // real repeat from one speaker sandwiched between unrelated text from
+    // the other, or wrongly suppress a legitimate short repeated word said
+    // by a different speaker right after the first speaker said it.
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    const isShortPhrase = wordCount > 0 && wordCount <= 6;
+    const lastAcceptedText = this.lastAcceptedTextBySpeaker.get(speakerLabel) ?? '';
+
+    if (isShortPhrase && normalized === lastAcceptedText) {
+      const nextCount = (this.consecutiveRepeatCountBySpeaker.get(speakerLabel) ?? 0) + 1;
+      this.consecutiveRepeatCountBySpeaker.set(speakerLabel, nextCount);
+      if (nextCount >= 1) return true;
+    } else {
+      this.consecutiveRepeatCountBySpeaker.set(speakerLabel, 0);
+    }
+
+    this.lastAcceptedTextBySpeaker.set(speakerLabel, normalized);
     return false;
   }
 
   // ── WAV encoder ───────────────────────────────────────────────────────────
 
-  /**
-   * Concatenate all Float32 chunks and encode as a 16-bit PCM mono WAV Blob.
-   * This matches the format expected by Whisper's /audio/transcriptions endpoint.
-   */
   private encodePcmToWav(chunks: Float32Array[], sampleRate: number): Blob {
-    // Concatenate
     let totalLen = 0;
     for (const c of chunks) totalLen += c.length;
     const samples = new Float32Array(totalLen);
@@ -276,7 +476,6 @@ export class LiveTranscriptionEngine {
       offset += c.length;
     }
 
-    // Build WAV header
     const byteLen = samples.length * 2;
     const buffer = new ArrayBuffer(44 + byteLen);
     const view = new DataView(buffer);

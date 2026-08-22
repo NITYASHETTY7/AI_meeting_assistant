@@ -61,9 +61,15 @@
   --warning:        #D97706;
   --warning-bg:     rgba(217, 119, 6, 0.08);
   --warning-border: rgba(217, 119, 6, 0.20);
-  --error:          #DC2626;
-  --error-bg:       rgba(220, 38, 38, 0.08);
-  --error-border:   rgba(220, 38, 38, 0.20);
+  --error:          #2563EB;
+  --error-bg:       rgba(37, 99, 235, 0.08);
+  --error-border:   rgba(37, 99, 235, 0.22);
+
+  /* Secondary speaker accent — Purple (kept distinct from the blue "You" accent) */
+  --speaker-other:         #8B5CF6;
+  --speaker-other-bg:      rgba(139, 92, 246, 0.10);
+  --speaker-other-border:  rgba(139, 92, 246, 0.28);
+  --speaker-other-badge-bg: rgba(139, 92, 246, 0.18);
 
   /* Shadows */
   --shadow-sm:    0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.04);
@@ -85,16 +91,16 @@
 .dark {
   /* ── Dark Theme — premium palette ────────────────────────────────────────── */
 
-  /* Backgrounds — four elevation levels, no pure black */
-  --bg-app:         #171818;   /* outermost: window background         */
-  --bg-surface:     #1F2022;   /* primary panels, sidebar background   */
-  --bg-surface-2:   #27292C;   /* secondary panels, panel bodies       */
-  --bg-card:        #303236;   /* elevated cards, settings rows        */
-  --bg-hover:       #3A3D42;   /* hover state for cards and rows       */
-  --bg-input:       #27292C;   /* input field background               */
-  --bg-input-hover: #303236;   /* input hover/focus background         */
-  --bg-sidebar:     #171818;   /* sidebar — same as bg-app             */
-  --bg-header:      #1F2022;   /* page header strip                    */
+  /* Backgrounds — light-grey / soft slate-grey palette (not too dark) */
+  --bg-app:         #24272C;   /* outermost: window background         */
+  --bg-surface:     #2D3036;   /* primary panels, sidebar background   */
+  --bg-surface-2:   #353940;   /* secondary panels, panel bodies       */
+  --bg-card:        #3E424B;   /* elevated cards, settings rows        */
+  --bg-hover:       #484D57;   /* hover state for cards and rows       */
+  --bg-input:       #353940;   /* input field background               */
+  --bg-input-hover: #3E424B;   /* input hover/focus background         */
+  --bg-sidebar:     #24272C;   /* sidebar — same as bg-app             */
+  --bg-header:      #2D3036;   /* page header strip                    */
 
   /* Borders — white at very low opacity, never harsh */
   --border:         rgba(255, 255, 255, 0.08);
@@ -125,9 +131,15 @@
   --warning:        #F59E0B;
   --warning-bg:     rgba(245, 158, 11, 0.10);
   --warning-border: rgba(245, 158, 11, 0.20);
-  --error:          #EF4444;
-  --error-bg:       rgba(239, 68, 68, 0.10);
-  --error-border:   rgba(239, 68, 68, 0.20);
+  --error:          #60A5FA;
+  --error-bg:       rgba(96, 165, 250, 0.14);
+  --error-border:   rgba(96, 165, 250, 0.30);
+
+  /* Secondary speaker accent — Purple (kept distinct from the blue "You" accent) */
+  --speaker-other:         #A78BFA;
+  --speaker-other-bg:      rgba(167, 139, 250, 0.14);
+  --speaker-other-border:  rgba(167, 139, 250, 0.32);
+  --speaker-other-badge-bg: rgba(167, 139, 250, 0.22);
 
   /* Shadows — subtle in dark mode, mainly for separation */
   --shadow-sm:    0 1px 3px rgba(0,0,0,0.35);
@@ -275,15 +287,16 @@ body {
   color: var(--text-primary);
 }
 
-/* Danger — uses error palette, not accent */
+/* Danger / Delete button — sleek slate-blue styling with zero red */
 .mg-btn-danger {
-  background: var(--error-bg);
-  color: var(--error);
-  border-color: var(--error-border);
+  background: rgba(59, 130, 246, 0.10);
+  color: #60A5FA;
+  border-color: rgba(96, 165, 250, 0.30);
 }
 .mg-btn-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: var(--error);
+  background: rgba(59, 130, 246, 0.20);
+  border-color: #60A5FA;
+  color: #93C5FD;
 }
 
 /* ── Input base ──────────────────────────────────────────────────────────── */
@@ -432,4 +445,36 @@ select.mg-input {
 ::selection {
   background: var(--accent-subtle);
   color: var(--text-primary);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADDITIONAL NOTES — rich-text editor (contentEditable)
+
+   Tailwind's preflight resets ul/ol to list-style: none with no padding,
+   which is correct for app UI lists but silently hides the bullet/number
+   markers on lists a user creates by typing into the notes editor. Scoped
+   to this one class only — no other list in the app should regain default
+   browser list styling as a side effect of this override.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.additional-notes-editor ul {
+  list-style: disc;
+  padding-left: 1.5em;
+  margin: 0.25em 0;
+}
+
+.additional-notes-editor ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+  margin: 0.25em 0;
+}
+
+.additional-notes-editor li {
+  margin: 0.15em 0;
+}
+
+.additional-notes-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--text-disabled);
+  pointer-events: none;
 }

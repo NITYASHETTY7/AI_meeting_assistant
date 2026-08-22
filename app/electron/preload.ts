@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showNativeNotification: (options: { title: string; body: string }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('show-native-notification', options),
 
+  // ── Desktop Audio & Startup ──────────────────────────────────────────────────
+  getDesktopSources: (): Promise<{ id: string; name: string }[]> =>
+    ipcRenderer.invoke('get-desktop-sources'),
+  setOpenAtLogin: (openAtLogin: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('set-open-at-login', openAtLogin),
+  getOpenAtLogin: (): Promise<{ ok: boolean; openAtLogin: boolean; error?: string }> =>
+    ipcRenderer.invoke('get-open-at-login'),
+
   // ── OS Credential Store (keytar) ─────────────────────────────────────────────
   /**
    * Save (or overwrite) an API key for the given provider in the OS keychain.
@@ -66,7 +74,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Database: Meetings ───────────────────────────────────────────────────────
   dbListMeetings: () => ipcRenderer.invoke('db-list-meetings'),
   dbUpsertMeeting: (meeting: unknown) => ipcRenderer.invoke('db-upsert-meeting', meeting),
+  /** Moves a meeting to the Bin (soft delete) — see dbPermanentlyDeleteMeeting for the real erase. */
   dbDeleteMeeting: (meetingId: string) => ipcRenderer.invoke('db-delete-meeting', meetingId),
+  /** Lists meetings currently in the Bin. */
+  dbListDeletedMeetings: () => ipcRenderer.invoke('db-list-deleted-meetings'),
+  /** Restores a meeting from the Bin back to the active list. */
+  dbRestoreMeeting: (meetingId: string) => ipcRenderer.invoke('db-restore-meeting', meetingId),
+  /** Permanently erases a meeting and all related data. Cannot be undone. */
+  dbPermanentlyDeleteMeeting: (meetingId: string) => ipcRenderer.invoke('db-permanently-delete-meeting', meetingId),
   dbAppendTranscriptLine: (meetingId: string, line: unknown) =>
     ipcRenderer.invoke('db-append-transcript-line', meetingId, line),
   dbReplaceActionItems: (meetingId: string, items: unknown) =>

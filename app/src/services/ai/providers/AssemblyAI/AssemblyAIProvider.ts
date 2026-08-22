@@ -6,6 +6,17 @@ import type {
 } from '../../AIProvider';
 
 /**
+ * Minimum AssemblyAI-reported utterance confidence to keep. AssemblyAI
+ * returns a real 0-1 confidence per utterance (and per word) in its
+ * response — utterances below this are dropped as likely misrecognized/
+ * noise segments rather than being passed through to the transcript. Kept
+ * intentionally low (not aggressive) since AssemblyAI's own confidence
+ * tends to run lower than Whisper's on legitimately correct but informal
+ * speech (interjections, cross-talk).
+ */
+const MIN_UTTERANCE_CONFIDENCE = 0.4;
+
+/**
  * AssemblyAI Provider — Audio Intelligence Platform
  *
  * Endpoints:
@@ -103,14 +114,14 @@ export class AssemblyAIProvider implements AIProvider {
   }
 
   /** A single diarized speech segment returned by AssemblyAI when speaker_labels is enabled. */
-  private lastUtterances: { speaker: string; text: string; start: number; end: number }[] = [];
+  private lastUtterances: { speaker: string; text: string; start: number; end: number; confidence?: number }[] = [];
 
   /** Submit a transcription job and poll until complete. Returns transcript text + speaker-labeled utterances. */
   private async transcribeUrl(audioUrl: string): Promise<{ id: string; text: string }> {
     // Submit — speaker_labels: true enables real speaker diarization via
     // AssemblyAI's native support. The response then contains an
-    // `utterances` array (each with speaker "A"/"B"/etc, text, start, end)
-    // instead of only a flat `text` blob.
+    // `utterances` array (each with speaker "A"/"B"/etc, text, start, end,
+    // confidence) instead of only a flat `text` blob.
     const submit = await this.postJson<{ id: string; status: string }>('/v2/transcript', {
       audio_url: audioUrl,
       speech_model: this.speechModel,
@@ -131,11 +142,18 @@ export class AssemblyAIProvider implements AIProvider {
         status: string;
         text?: string;
         error?: string;
-        utterances?: { speaker: string; text: string; start: number; end: number }[];
+        utterances?: { speaker: string; text: string; start: number; end: number; confidence?: number }[];
       }>(`/v2/transcript/${id}`);
 
       if (poll.status === 'completed') {
-        this.lastUtterances = poll.utterances ?? [];
+        // Drop utterances AssemblyAI itself scored as low-confidence rather
+        // than passing them through to the transcript unfiltered — this is
+        // the same model-reported-confidence gate used on the live OpenAI/
+        // Groq path, applied here to the response that was already
+        // received (no extra request, no added latency).
+        this.lastUtterances = (poll.utterances ?? []).filter(
+          (u) => u.confidence === undefined || u.confidence >= MIN_UTTERANCE_CONFIDENCE
+        );
         return { id, text: poll.text ?? '' };
       }
       if (poll.status === 'error') throw new Error(`AssemblyAI transcription error: ${poll.error ?? 'Unknown.'}`);
@@ -146,12 +164,14 @@ export class AssemblyAIProvider implements AIProvider {
 
   /**
    * Returns the speaker-labeled utterances from the most recently completed
-   * transcription. Empty if diarization returned no utterances (e.g. a
-   * single speaker with too little speech to diarize, per AssemblyAI's
-   * documented minimum of ~30s continuous speech per speaker for reliable
-   * separation) — callers should fall back to the flat transcript text.
+   * transcription, already filtered to drop any AssemblyAI itself scored
+   * below MIN_UTTERANCE_CONFIDENCE. Empty if diarization returned no
+   * utterances (e.g. a single speaker with too little speech to diarize,
+   * per AssemblyAI's documented minimum of ~30s continuous speech per
+   * speaker for reliable separation) — callers should fall back to the flat
+   * transcript text.
    */
-  getLastUtterances(): { speaker: string; text: string; start: number; end: number }[] {
+  getLastUtterances(): { speaker: string; text: string; start: number; end: number; confidence?: number }[] {
     return this.lastUtterances;
   }
 

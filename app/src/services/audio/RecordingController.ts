@@ -1,6 +1,7 @@
 import { AudioCapture } from './AudioCapture';
 import { WaveFileWriter } from './WaveFileWriter';
 import { useAppStore } from '../../store/useAppStore';
+import type { SpeakerTrack } from '../ai/AIProvider';
 import { TranscriptionManager } from '../transcription/TranscriptionManager';
 
 /**
@@ -20,9 +21,14 @@ import { TranscriptionManager } from '../transcription/TranscriptionManager';
  * and the MockStreamEngine was running on both paths simultaneously).
  *
  * Meeting creation:
- *   start() always creates a new meeting via createMeetingForRecording() so that
- *   TranscriptionManager always has a valid meeting ID to append transcript lines to.
- *   An optional meetingSource label (e.g. "Google Meet") is used for the title.
+ *   start() resumes the currently open meeting (resumeMeetingId, e.g. the one
+ *   the user is viewing when they press "Start Recording" again after a
+ *   stop) so existing transcript lines are kept and new lines are appended
+ *   to the same meeting. Only when there is no meeting to resume (e.g. the
+ *   global "New Recording" action, or auto-detected meeting notifications)
+ *   does it create a fresh meeting via createMeetingForRecording().
+ *   An optional meetingSource label (e.g. "Google Meet") is used for the title
+ *   of newly created meetings.
  */
 export class RecordingController {
   private capture: AudioCapture | null = null;
@@ -34,17 +40,38 @@ export class RecordingController {
     this.onVolumeChange = onVolumeChange;
   }
 
-  async start(deviceId = 'default', meetingSource?: string): Promise<void> {
+  /**
+   * @param deviceId        Microphone device ID to capture from.
+   * @param meetingSource   Optional label (e.g. "Google Meet") used for the
+   *                         title when a new meeting is created.
+   * @param resumeMeetingId Optional ID of an existing meeting to resume
+   *                         recording into. When provided, no new meeting is
+   *                         created and the existing transcript is preserved —
+   *                         new lines are simply appended to it.
+   */
+  async start(deviceId = 'default', meetingSource?: string, resumeMeetingId?: string): Promise<void> {
     const store = useAppStore.getState();
     const rate = parseInt(store.sampleRate) || 44100;
     this.sampleRate = rate;
 
-    // Always create a fresh meeting record so TranscriptionManager has a valid target
-    const meetingId = store.createMeetingForRecording(meetingSource);
+    // Resume the existing meeting if one was specified and still exists;
+    // otherwise fall back to creating a fresh meeting record.
+    const existingMeeting = resumeMeetingId
+      ? store.meetings.find((m) => m.id === resumeMeetingId)
+      : undefined;
+
+    const meetingId = existingMeeting
+      ? existingMeeting.id
+      : store.createMeetingForRecording(meetingSource);
+
+    store.setActiveMeetingId(meetingId);
+    store.setMeetingPreview(meetingId, 'Recording in progress…');
 
     useAppStore.setState({
       recordingStatus: 'recording',
-      recordingDuration: 0,
+      // Continue the on-screen timer from where it left off when resuming an
+      // existing meeting; only reset to 0 for a brand-new meeting.
+      recordingDuration: existingMeeting ? store.recordingDuration : 0,
       recordingFilePath: null,
     });
 
@@ -54,10 +81,9 @@ export class RecordingController {
       this.capture = new AudioCapture(
         rate,
         this.onVolumeChange,
-        (chunk: Float32Array) => {
-          // Feed raw audio chunk to TranscriptionManager for live Whisper batching.
-          // This call is fire-and-forget — errors are swallowed inside the engine.
-          TranscriptionManager.feedChunk(chunk);
+        (chunk: Float32Array, speakerTrack?: SpeakerTrack) => {
+          // Feed raw audio chunk to TranscriptionManager with speaker track
+          TranscriptionManager.feedChunk(chunk, speakerTrack);
         }
       );
 
@@ -77,39 +103,68 @@ export class RecordingController {
       this.capture = null;
       useAppStore.setState({
         recordingStatus: 'idle',
-        recordingDuration: 0,
+        recordingDuration: existingMeeting ? store.recordingDuration : 0,
       });
-      store.deleteMeeting(meetingId);
+      // Only delete the meeting if we created it for this attempt — never
+      // delete a pre-existing meeting the user was resuming into. This is a
+      // permanent delete (not a move to Bin): the meeting never captured
+      // any real content, so there's nothing worth keeping recoverable.
+      if (!existingMeeting) {
+        store.permanentlyDeleteMeeting(meetingId);
+      }
       throw err;
     }
   }
 
   pause(): void {
-    if (!this.capture) return;
-    this.capture.pause();
+    if (this.capture) {
+      try {
+        this.capture.pause();
+      } catch (e) {
+        console.warn('[RecordingController] pause error:', e);
+      }
+    }
     this.stopTimer();
     useAppStore.setState({ recordingStatus: 'paused' });
-    TranscriptionManager.pause();
+    try {
+      TranscriptionManager.pause();
+    } catch { /* ignore */ }
   }
 
   resume(): void {
-    if (!this.capture) return;
-    this.capture.resume();
+    if (this.capture) {
+      try {
+        this.capture.resume();
+      } catch (e) {
+        console.warn('[RecordingController] resume error:', e);
+      }
+    }
     this.startTimer();
     useAppStore.setState({ recordingStatus: 'recording' });
-    TranscriptionManager.resume();
+    try {
+      TranscriptionManager.resume();
+    } catch { /* ignore */ }
   }
 
   async stop(): Promise<string | null> {
     this.stopTimer();
 
-    if (!this.capture) return null;
+    // Immediately update UI to stopped state
+    useAppStore.setState({ recordingStatus: 'stopped' });
 
-    // Collect samples BEFORE calling stop (stop() clears the buffer)
-    const samples = this.capture.stop();
-    this.capture = null;
+    let samples: Float32Array;
+    if (this.capture) {
+      try {
+        samples = this.capture.stop();
+      } catch (e) {
+        console.warn('[RecordingController] error stopping audio capture:', e);
+        samples = new Float32Array(0);
+      }
+      this.capture = null;
+    } else {
+      samples = new Float32Array(0);
+    }
 
-    // Encode to WAV and persist
     const wavBuffer = WaveFileWriter.writeWav(samples, this.sampleRate);
     const fileName = `meeting_${Date.now()}.wav`;
     let savedPath: string | null = null;
@@ -118,7 +173,6 @@ export class RecordingController {
       if (window.electronAPI?.saveAudio) {
         savedPath = await window.electronAPI.saveAudio(fileName, wavBuffer);
       } else {
-        // Dev mode: generate a synthetic path for display purposes
         savedPath = `recordings/${fileName}`;
       }
     } catch (err) {
@@ -126,38 +180,28 @@ export class RecordingController {
       savedPath = `recordings/${fileName}`;
     }
 
-    // Stop transcription — flushes any pending audio batch.
-    // For AssemblyAI (post-recording STT), the WAV blob is forwarded so the
-    // engine can upload and transcribe after recording ends.
-    const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
-    await TranscriptionManager.stop(wavBlob);
+    try {
+      const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+      await TranscriptionManager.stop(wavBlob);
+    } catch (err) {
+      console.warn('[RecordingController] TranscriptionManager stop error:', err);
+    }
 
-    // Write the final elapsed duration onto the meeting record. Without this,
-    // every meeting permanently shows its initial placeholder "0m" — the
-    // recordingDuration counter (seconds) was tracked live during recording
-    // but never persisted onto the meeting itself.
     const finalStore = useAppStore.getState();
     if (finalStore.activeMeetingId) {
-      finalStore.setMeetingDuration(
-        finalStore.activeMeetingId,
-        RecordingController.formatDuration(finalStore.recordingDuration)
-      );
+      try {
+        finalStore.setMeetingDuration(
+          finalStore.activeMeetingId,
+          RecordingController.formatDuration(finalStore.recordingDuration)
+        );
 
-      // Replace the "Recording in progress…" placeholder preview now that
-      // recording has actually stopped. For live-STT providers the
-      // transcript is already populated at this point, so use its first
-      // line; for post-recording providers (AssemblyAI/Deepgram) the
-      // transcript arrives asynchronously after this — TranscriptionManager
-      // updates the preview again once that completes. Without this
-      // immediate update, meetings with no transcript at all (non-STT
-      // providers, or STT that produced nothing) would show the recording
-      // placeholder forever.
-      const meeting = finalStore.meetings.find((m) => m.id === finalStore.activeMeetingId);
-      const firstLine = meeting?.transcript[0]?.text;
-      finalStore.setMeetingPreview(
-        finalStore.activeMeetingId,
-        firstLine ? firstLine.slice(0, 120) : 'No transcript captured. Click to add notes or generate a summary.'
-      );
+        const meeting = finalStore.meetings.find((m) => m.id === finalStore.activeMeetingId);
+        const firstLine = meeting?.transcript[0]?.text;
+        finalStore.setMeetingPreview(
+          finalStore.activeMeetingId,
+          firstLine ? firstLine.slice(0, 120) : 'No transcript captured. Click to add notes or generate a summary.'
+        );
+      } catch { /* ignore */ }
     }
 
     useAppStore.setState({
@@ -166,6 +210,16 @@ export class RecordingController {
     });
 
     return savedPath;
+  }
+
+  setMicMuted(muted: boolean): void {
+    if (this.capture) {
+      this.capture.setMicMuted(muted);
+    }
+  }
+
+  isMicMuted(): boolean {
+    return this.capture ? this.capture.getMicMuted() : false;
   }
 
   cancel(): void {
@@ -177,6 +231,14 @@ export class RecordingController {
       this.capture = null;
     }
 
+    const store = useAppStore.getState();
+    if (store.activeMeetingId) {
+      const activeMeeting = store.meetings.find((m) => m.id === store.activeMeetingId);
+      if (activeMeeting && activeMeeting.preview === 'Recording in progress…') {
+        store.setMeetingPreview(store.activeMeetingId, 'No summary generated yet.');
+      }
+    }
+
     useAppStore.setState({
       recordingStatus: 'idle',
       recordingDuration: 0,
@@ -185,9 +247,11 @@ export class RecordingController {
   }
 
   private startTimer(): void {
-    if (this.timerId !== null) return;
+    this.stopTimer();
     this.timerId = setInterval(() => {
-      useAppStore.getState().incrementRecordingDuration();
+      if (useAppStore.getState().recordingStatus === 'recording') {
+        useAppStore.getState().incrementRecordingDuration();
+      }
     }, 1000);
   }
 

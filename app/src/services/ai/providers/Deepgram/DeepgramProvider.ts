@@ -7,6 +7,17 @@ import type {
 } from '../../AIProvider';
 
 /**
+ * Minimum derived per-utterance confidence to keep. Deepgram doesn't
+ * reliably expose a single top-level utterance confidence field, so this is
+ * computed by averaging the confidence of words whose timestamps fall
+ * inside the utterance range (falling back to the overall channel
+ * confidence) — see transcribeBlob(). Utterances below this are dropped as
+ * likely misrecognized/noise segments before they ever reach the
+ * transcript.
+ */
+const MIN_UTTERANCE_CONFIDENCE = 0.4;
+
+/**
  * Deepgram Provider — speech-to-text specialist, used two ways in this app:
  *
  *  1. As a selectable provider in Settings (like AssemblyAI) — BYO Deepgram
@@ -29,7 +40,6 @@ export class DeepgramProvider implements AIProvider {
   private readonly BASE_URL = 'https://api.deepgram.com/v1/listen';
   private readonly MODELS = ['nova-3', 'nova-2', 'base'];
   private lastUtterances: DiarizedUtterance[] = [];
-
   initialize(config: ProviderConfig): void {
     this.config = config;
   }
@@ -60,7 +70,8 @@ export class DeepgramProvider implements AIProvider {
   /**
    * Core transcription call — sends a WAV Blob and returns the flat
    * transcript text. Also populates lastUtterances with speaker-labeled
-   * segments when diarization succeeds (getLastUtterances()).
+   * segments when diarization succeeds (getLastUtterances()), each carrying
+   * a derived confidence score.
    *
    * Public (not private) so TranscriptionManager can call it directly as a
    * fallback path without swapping the entire active provider.
@@ -92,17 +103,41 @@ export class DeepgramProvider implements AIProvider {
 
     const data = await res.json() as {
       results?: {
-        channels?: { alternatives?: { transcript?: string }[] }[];
-        utterances?: { speaker: number; transcript: string; start: number; end: number }[];
+        channels?: {
+          alternatives?: {
+            transcript?: string;
+            confidence?: number;
+            words?: { word: string; start: number; end: number; confidence?: number }[];
+          }[];
+        }[];
+        utterances?: { speaker: number; transcript: string; start: number; end: number; confidence?: number }[];
       };
     };
 
-    this.lastUtterances = (data.results?.utterances ?? []).map((u) => ({
-      speaker: String(u.speaker),
-      text: u.transcript,
-      start: Math.round(u.start * 1000),
-      end: Math.round(u.end * 1000),
-    }));
+    // Deepgram's utterance objects don't reliably carry their own top-level
+    // confidence — the real per-token signal lives in
+    // channels[0].alternatives[0].words[].confidence. Average the word
+    // confidences whose [start, end] falls inside each utterance's time
+    // range to get a per-utterance score; fall back to the utterance's own
+    // confidence field if a future API version adds one, then to the
+    // overall alternative confidence if neither is available.
+    const words = data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
+    const overallConfidence = data.results?.channels?.[0]?.alternatives?.[0]?.confidence;
+
+    this.lastUtterances = (data.results?.utterances ?? []).map((u) => {
+      const wordsInRange = words.filter((w) => w.start >= u.start && w.end <= u.end && w.confidence !== undefined);
+      const derivedConfidence = wordsInRange.length > 0
+        ? wordsInRange.reduce((sum, w) => sum + (w.confidence ?? 0), 0) / wordsInRange.length
+        : (u.confidence ?? overallConfidence);
+
+      return {
+        speaker: String(u.speaker),
+        text: u.transcript,
+        start: Math.round(u.start * 1000),
+        end: Math.round(u.end * 1000),
+        confidence: derivedConfidence,
+      };
+    }).filter((u) => u.confidence === undefined || u.confidence >= MIN_UTTERANCE_CONFIDENCE);
 
     return data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? '';
   }

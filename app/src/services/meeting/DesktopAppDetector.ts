@@ -92,55 +92,65 @@ const DESKTOP_MEETING_RULES: DesktopMeetingRule[] = [
   // ─────────────────────────────────────────────────────────────────────────
 
   {
-    // FUTURE: Zoom Desktop
+    // Zoom Desktop
     source: 'Zoom',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
       /zoom meeting/i,
-      /zoom\s*-\s*meeting/i,
-      /^zoom$/i,
+      /zoom webinar/i,
+      /zoom\s*[-–]\s*meeting/i,
+      /meeting\s*[-–]\s*zoom/i,
     ],
     excludePatterns: [
-      /zoom\s*-\s*sign in/i,
-      /zoom\s*-\s*sign up/i,
+      /^zoom$/i,
+      /^zoom workplace$/i,
+      /zoom\s*[-–]\s*sign in/i,
+      /zoom\s*[-–]\s*sign up/i,
       /zoom cloud meetings/i,
     ],
   },
 
   {
-    // FUTURE: Slack Huddles (desktop client)
+    // Slack Huddles (desktop client)
     source: 'Slack Huddle',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
       /slack.*huddle/i,
       /huddle.*slack/i,
       /-\s*huddle/i,
     ],
-    excludePatterns: [],
+    excludePatterns: [
+      /^slack$/i,
+    ],
   },
 
   {
-    // FUTURE: Discord Voice Calls (desktop client)
+    // Discord Voice Calls (desktop client)
     source: 'Discord',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
-      /discord.*voice/i,
       /voice connected.*discord/i,
+      /discord.*voice connected/i,
+    ],
+    excludePatterns: [
       /^discord$/i,
     ],
-    excludePatterns: [],
   },
 
   {
-    // FUTURE: Cisco Webex (desktop client)
+    // Cisco Webex (desktop client)
     source: 'Webex',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
-      /cisco webex/i,
+      /cisco webex meeting/i,
       /webex meeting/i,
-      /webex\s*-\s*meeting/i,
+      /webex\s*[-–]\s*meeting/i,
     ],
-    excludePatterns: [],
+    excludePatterns: [
+      /^cisco webex$/i,
+      /^webex$/i,
+      /sign\s*in.*webex/i,
+    ],
   },
 ];
 

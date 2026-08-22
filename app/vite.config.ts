@@ -23,13 +23,28 @@ export default defineConfig({
         },
       },
       preload: {
-        // Simple API's preload preset correctly builds this as CJS with the
-        // right extension even when package.json has "type": "module" —
-        // the flat API used previously does not apply this preset, which is
-        // why the preload script was emitted as ESM and failed to load in
-        // Electron's sandboxed preload context ("Cannot use import
-        // statement outside a module").
+        // The Simple API's preload preset emits CJS syntax (require(...))
+        // regardless of package.json's "type": "module", but with
+        // package.json set to "module" it still names the output file
+        // preload.mjs. Node/Electron always parses .mjs as an ES module
+        // based on the extension alone, so a CJS-syntax file named .mjs
+        // fails to evaluate in the sandboxed preload context — Electron
+        // then never populates startupData.preloadScripts, which crashes
+        // the sandbox bundle with "Cannot destructure property
+        // 'preloadScripts' of 'binding.startupData' as it is null."
+        // Forcing the output to .js with an explicit CJS format keeps the
+        // extension and content in agreement.
         input: 'electron/preload.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              output: {
+                format: 'cjs',
+                entryFileNames: 'preload.js',
+              },
+            },
+          },
+        },
       },
       renderer: {},
     }),

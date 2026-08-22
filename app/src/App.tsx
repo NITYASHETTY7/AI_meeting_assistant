@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AppLayout } from './components/AppLayout';
+import { AppLayout, LAST_ROUTE_KEY } from './components/AppLayout';
 import { Home } from './pages/Home/Home';
 import { Meeting } from './pages/Meeting/Meeting';
-import { History } from './pages/History/History';
 import { Settings } from './pages/Settings/Settings';
 import { Chat } from './pages/Chat/Chat';
+import { Bin } from './pages/Bin/Bin';
 import { Onboarding } from './pages/Onboarding/Onboarding';
 import { useAppStore } from './store/useAppStore';
 import { ProviderManager } from './services/ai/ProviderManager';
@@ -103,20 +103,62 @@ function App() {
             // ignore — Settings page will retry this on visit
           }
         }
+      } catch (err) {
+        console.error('Failed checking provider credentials:', err);
       } finally {
         setOnboardingChecked(true);
       }
     };
-    void checkAllProviders();
+
+    // Safety fallback timer — ensure app never stays stuck on blank/loading screen
+    const safetyTimer = setTimeout(() => {
+      setOnboardingChecked(true);
+    }, 1500);
+
+    checkAllProviders().finally(() => {
+      clearTimeout(safetyTimer);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markProviderKeySaved]);
+
+  // Recovery for an unexpected hard reload (e.g. a Chromium network-service
+  // crash killing the renderer mid-request): HashRouter resets to the bare
+  // "/" hash on reload, silently dropping the user back on Home with no
+  // explanation of what happened. If the hash is currently bare/empty, try
+  // to jump back to whatever page was last visited (persisted by AppLayout)
+  // rather than leaving this as an unexplained "it randomly went to Home".
+  // Runs as an effect (not inline during render) — mutating
+  // window.location.hash directly during render fires a synchronous
+  // hashchange that HashRouter reacts to internally, which React flags as
+  // "Cannot update a component while rendering a different component".
+  // Declared before any conditional return so this hook always runs in the
+  // same order every render, per the Rules of Hooks.
+  // Only fires once per load and never overrides a deliberate navigation —
+  // by the time any other route change happens, the hash is no longer bare.
+  useEffect(() => {
+    if (!onboardingChecked || !hasAnyKey) return;
+    if (window.location.hash === '' || window.location.hash === '#/' || window.location.hash === '#') {
+      try {
+        const lastRoute = localStorage.getItem(LAST_ROUTE_KEY);
+        if (lastRoute && lastRoute !== '/' && lastRoute.startsWith('/')) {
+          window.location.hash = `#${lastRoute}`;
+        }
+      } catch {
+        // ignore — falls back to Home, which is still a valid, working state
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onboardingChecked, hasAnyKey]);
 
   if (!onboardingChecked) {
     return (
       <div
-        className="w-screen h-screen flex items-center justify-center"
-        style={{ background: 'var(--bg-app)' }}
-      />
+        className="w-screen h-screen flex flex-col items-center justify-center gap-3 select-none"
+        style={{ background: 'var(--bg-app)', color: 'var(--text-primary)' }}
+      >
+        <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+        <span className="text-xs font-semibold tracking-wider text-zinc-400">Loading Mirai Granola…</span>
+      </div>
     );
   }
 
@@ -127,6 +169,12 @@ function App() {
           path="/onboarding"
           element={hasAnyKey ? <Navigate to="/" replace /> : <Onboarding />}
         />
+        {/* Settings is always accessible — even with no key saved.
+            This lets users delete their last key and re-enter a new one
+            without being forced back through onboarding. */}
+        <Route element={<AppLayout />}>
+          <Route path="/settings" element={<Settings />} />
+        </Route>
         <Route
           element={
             hasAnyKey ? (
@@ -139,8 +187,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/meeting" element={<Meeting />} />
           <Route path="/chat" element={<Chat />} />
-          <Route path="/history" element={<History />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/bin" element={<Bin />} />
         </Route>
       </Routes>
     </Router>

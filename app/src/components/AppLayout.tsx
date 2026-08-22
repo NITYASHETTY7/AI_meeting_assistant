@@ -1,19 +1,39 @@
 import { useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { MeetingNotification } from './MeetingNotification';
 import { meetingDetectionService } from '../services/meeting/MeetingDetectionService';
 import { useAppStore } from '../store/useAppStore';
 
+/** localStorage key for the last visited route — see App.tsx for where this is restored. */
+export const LAST_ROUTE_KEY = 'mirai-last-route';
+
 export const AppLayout = () => {
   const hydrateFromDb = useAppStore((state) => state.hydrateFromDb);
   const hydrateChatFromDb = useAppStore((state) => state.hydrateChatFromDb);
+  const hydrateBinFromDb = useAppStore((state) => state.hydrateBinFromDb);
   const audioRetentionDays = useAppStore((state) => state.audioRetentionDays);
+  const location = useLocation();
+
+  // Persist the current route (path + query string, e.g. "/chat?meetingId=x")
+  // on every navigation. If the renderer ever hard-reloads unexpectedly
+  // (e.g. a Chromium network-service crash taking the page down mid-request),
+  // HashRouter resets to the bare "/" hash on reload — this lets App.tsx
+  // send the user back to whatever page/thread they were actually on instead
+  // of always landing on Home with no explanation.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_ROUTE_KEY, location.pathname + location.search);
+    } catch {
+      // ignore — this is a best-effort recovery aid, not required for correctness
+    }
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     void hydrateFromDb();
     void hydrateChatFromDb();
-  }, [hydrateFromDb, hydrateChatFromDb]);
+    void hydrateBinFromDb();
+  }, [hydrateFromDb, hydrateChatFromDb, hydrateBinFromDb]);
 
   // Apply the audio retention policy once per app launch — deletes any
   // recording older than the configured window. Runs after hydration so it
@@ -40,7 +60,7 @@ export const AppLayout = () => {
 
   return (
     <div
-      className="flex w-screen h-screen overflow-hidden font-sans antialiased"
+      className="flex w-screen h-screen overflow-hidden font-sans antialiased relative"
       style={{ background: 'var(--bg-app)', color: 'var(--text-primary)' }}
     >
       <Sidebar />

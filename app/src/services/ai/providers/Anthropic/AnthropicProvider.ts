@@ -177,36 +177,58 @@ export class AnthropicProvider implements AIProvider {
   async generateSummary(transcript: string): Promise<string> {
     return this.sendMessage(
       `Write a concise professional meeting summary covering the main topics, key points, and outcome.\n\nTranscript:\n${transcript}`,
-      'You are an expert meeting assistant. Provide structured, professional summaries in plain text.'
+      this.plainTextSystemPrompt('Provide structured, professional summaries.')
     );
   }
 
   async generateMeetingTitle(transcript: string): Promise<string> {
     const raw = await this.sendMessage(
-      `Generate a short professional meeting title (5 words or fewer). Return only the title.\n\nTranscript:\n${transcript}`
+      `Generate a short professional meeting title (5 words or fewer). Return only the title.\n\nTranscript:\n${transcript}`,
+      this.plainTextSystemPrompt('Return only the title text, nothing else.')
     );
     return raw.replace(/^["']|["']$/g, '').trim();
   }
 
   async extractActionItems(transcript: string): Promise<string[]> {
     const raw = await this.sendMessage(
-      `Extract all action items from this meeting. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`
+      `Extract all action items from this meeting. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`,
+      this.plainTextSystemPrompt('Extract structured lists from meeting transcripts.')
     );
     return this.parseLines(raw);
   }
 
   async extractDecisions(transcript: string): Promise<string[]> {
     const raw = await this.sendMessage(
-      `Extract all decisions made in this meeting. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`
+      `Extract all decisions made in this meeting. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`,
+      this.plainTextSystemPrompt('Extract structured lists from meeting transcripts.')
     );
     return this.parseLines(raw);
   }
 
   async extractFollowUps(transcript: string): Promise<string[]> {
     const raw = await this.sendMessage(
-      `Extract all follow-up items, open questions, and next steps. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`
+      `Extract all follow-up items, open questions, and next steps. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`,
+      this.plainTextSystemPrompt('Extract structured lists from meeting transcripts.')
     );
     return this.parseLines(raw);
+  }
+
+  /**
+   * Shared plain-text constraint appended to every extraction system prompt.
+   * Models frequently emit markdown (**bold**, ## headers) even when told to
+   * use "plain text" in isolation — this output is rendered as-is in a plain
+   * textarea and copied verbatim into email shares, so it must be explicit
+   * and give concrete examples of what NOT to do, not just a vague hint.
+   * AIGenerationService also strips any markdown that slips through as a
+   * final guarantee, but a stronger prompt reduces how often that's needed.
+   */
+  private plainTextSystemPrompt(role: string): string {
+    return (
+      `You are an expert meeting assistant. ${role} ` +
+      'Do not use any markdown syntax: no **bold**, no _italic_, no ## headers, ' +
+      'no `code` backticks, and no * or + bullet markers. Write plain text only ' +
+      '— use a hyphen "-" for list items if needed, and plain sentences otherwise.'
+    );
   }
 
   async chat(messages: unknown[]): Promise<string> {

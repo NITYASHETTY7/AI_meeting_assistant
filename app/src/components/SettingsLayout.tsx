@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { Sparkles, Monitor, Disc, HardDrive, Info, ShieldAlert, Bell, Languages } from 'lucide-react';
+import { Sparkles, Monitor, Disc, HardDrive, Info, Bell, Languages } from 'lucide-react';
 
-export type SettingsTab = 'model' | 'appearance' | 'notifications' | 'language' | 'recording' | 'storage' | 'advanced' | 'about';
+export type SettingsTab = 'model' | 'appearance' | 'notifications' | 'language' | 'recording' | 'storage' | 'about';
 
 interface SettingsLayoutProps {
   children: (activeTab: SettingsTab) => ReactNode;
@@ -23,7 +23,6 @@ export const SettingsLayout = ({ children }: SettingsLayoutProps) => {
     { id: 'language',      label: 'Language',       icon: Languages   },
     { id: 'recording',     label: 'Recording',      icon: Disc        },
     { id: 'storage',       label: 'Storage',        icon: HardDrive   },
-    { id: 'advanced',      label: 'Advanced',       icon: ShieldAlert },
     { id: 'about',         label: 'About',          icon: Info        },
   ];
 

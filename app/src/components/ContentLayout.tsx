@@ -22,7 +22,7 @@ export const ContentLayout = ({
     >
       {/* Header */}
       <header
-        className="flex items-center justify-between px-7 py-5 select-none shrink-0"
+        className="flex items-center justify-between px-4 sm:px-5 md:px-7 py-4 md:py-5 select-none shrink-0 flex-wrap gap-2"
         style={{
           background: 'var(--bg-header)',
           borderBottom: '1px solid var(--border)',
@@ -30,7 +30,7 @@ export const ContentLayout = ({
       >
         <div>
           <h1
-            className="text-lg font-bold tracking-tight"
+            className="text-base sm:text-lg font-bold tracking-tight"
             style={{ color: 'var(--text-primary)' }}
           >
             {title}
@@ -45,13 +45,13 @@ export const ContentLayout = ({
           )}
         </div>
         {headerActions && (
-          <div className="flex items-center gap-2">{headerActions}</div>
+          <div className="flex items-center gap-2 shrink-0">{headerActions}</div>
         )}
       </header>
 
       {/* Content */}
       <main
-        className={`flex-1 ${fullHeight ? 'overflow-hidden' : 'overflow-y-auto'} p-7`}
+        className={`flex-1 ${fullHeight ? 'overflow-hidden' : 'overflow-y-auto'} p-4 sm:p-5 md:p-7`}
       >
         <div
           className={`max-w-5xl mx-auto h-full ${fullHeight ? 'flex flex-col min-h-0' : ''}`}

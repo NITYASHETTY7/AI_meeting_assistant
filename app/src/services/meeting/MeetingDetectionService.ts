@@ -48,9 +48,15 @@ function debugLog(message: string, data?: Record<string, unknown>) {
  * ── NOTIFICATION DEDUPLICATION ──────────────────────────────────────────────
  *
  *   - Each unique meeting gets at most ONE notification.
- *   - The meeting ID is a stable hash of (detector, source, label).
- *   - Once the user dismisses a meeting, it is added to `dismissedMeetingIds`
- *     in the Zustand store and is never shown again for that session.
+ *   - The meeting ID is a stable hash of (detector, source, label). Some apps
+ *     (e.g. Teams desktop) keep the same window title for the whole call, so
+ *     the ID does not change between polls while that call is ongoing.
+ *   - Once the user dismisses a meeting (or starts recording from the
+ *     banner), its ID is added to `dismissedMeetingIds` and stays suppressed
+ *     only while that meeting keeps being detected. The moment a poll finds
+ *     no matching window at all (the call actually ended), the ID is
+ *     released — so a later, distinct call that happens to produce the same
+ *     title (e.g. another call with the same person) will notify normally.
  *   - The notification is also suppressed while recording is active.
  *
  * ── ARCHITECTURE NOTE ───────────────────────────────────────────────────────
@@ -70,16 +76,17 @@ export class MeetingDetectionService {
   private lastDetectedId: string | null = null;
   private pollCount = 0;
   /**
-   * Timestamp (per platform source) of the last time a notification was
-   * shown, independent of exact meeting ID. This is a safety net against
-   * the meetingId changing slightly between polls (e.g. if a browser tab
-   * title's variable suffix leaks into label extraction in some edge case)
-   * — without it, an unstable ID would defeat the dismissedMeetingIds/
-   * lastDetectedId dedup entirely and the same real meeting could
-   * re-notify repeatedly within seconds of being dismissed.
+   * Timestamp (per exact meeting ID) of the last time a notification was
+   * shown for that meeting. This is a safety net against a poll re-showing
+   * the same still-open meeting immediately after dismissal due to a race
+   * between the dismiss action and the next poll tick — it is NOT meant to
+   * block a genuine leave-and-rejoin (of this meeting or an unrelated one on
+   * the same platform), so it is keyed by the specific meeting ID rather
+   * than the platform source, and uses a short window rather than a long one.
    */
-  private lastNotifiedAtBySource = new Map<string, number>();
-  private static readonly RENOTIFY_COOLDOWN_MS = 60_000;
+  private lastNotifiedAtByMeetingId = new Map<string, number>();
+  private static readonly RENOTIFY_COOLDOWN_MS = 10_000;
+  private isPolling = false;
 
   /** Start polling. Safe to call multiple times — will not double-start. */
   start() {
@@ -95,13 +102,17 @@ export class MeetingDetectionService {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+      this.isPolling = false;
       debugLog('Detection service stopped', { totalPolls: this.pollCount });
     }
   }
 
   private async poll(): Promise<void> {
-    this.pollCount++;
-    const store = useAppStore.getState();
+    if (this.isPolling) return;
+    this.isPolling = true;
+    try {
+      this.pollCount++;
+      const store = useAppStore.getState();
 
     // Respect the Settings > Notifications toggles: master "disable all"
     // switch, and the meeting-detection-specific toggle. Skip polling
@@ -199,6 +210,15 @@ export class MeetingDetectionService {
       } else {
         debugLog('No meeting detected');
       }
+      // The meeting window/tab is gone, so this specific detection has truly
+      // ended. Release its ID from the dismissed set — meeting IDs are
+      // content-based (source + label), so apps whose title stays static for
+      // the whole call (e.g. Teams desktop) would otherwise never be able to
+      // notify again for any later, distinct call with the same title.
+      if (this.lastDetectedId) {
+        store.clearDismissedMeeting(this.lastDetectedId);
+        this.lastNotifiedAtByMeetingId.delete(this.lastDetectedId);
+      }
       this.lastDetectedId = null;
       return;
     }
@@ -219,6 +239,11 @@ export class MeetingDetectionService {
       debugLog('Notification suppressed — meeting dismissed by user', {
         meetingId: meeting.id,
       });
+      // Keep tracking this as the "current" detection even while suppressed,
+      // so that once the meeting genuinely ends (poll finds nothing), the
+      // no-meeting-detected branch above can reliably release this exact ID
+      // from the dismissed set — regardless of which code path dismissed it.
+      this.lastDetectedId = meeting.id;
       return;
     }
 
@@ -229,13 +254,14 @@ export class MeetingDetectionService {
     }
 
     // ── Cooldown safety net ──────────────────────────────────────────────────
-    // Independent of exact meetingId matching — suppresses re-notifying for
-    // the same platform source within RENOTIFY_COOLDOWN_MS, even if the
-    // computed meetingId happened to differ from the previous poll.
-    const lastNotifiedAt = this.lastNotifiedAtBySource.get(meeting.source);
+    // Keyed by the exact meeting ID (not platform) and kept short — this only
+    // guards against a poll re-showing a notification microseconds after it
+    // was already shown/dismissed in the same tick; it must not block a
+    // genuine leave-and-rejoin of this or any other meeting.
+    const lastNotifiedAt = this.lastNotifiedAtByMeetingId.get(meeting.id);
     if (lastNotifiedAt && Date.now() - lastNotifiedAt < MeetingDetectionService.RENOTIFY_COOLDOWN_MS) {
       debugLog('Notification suppressed — within re-notify cooldown', {
-        source: meeting.source,
+        meetingId: meeting.id,
         msSinceLast: Date.now() - lastNotifiedAt,
       });
       return;
@@ -249,22 +275,25 @@ export class MeetingDetectionService {
     });
 
     this.lastDetectedId = meeting.id;
-    this.lastNotifiedAtBySource.set(meeting.source, Date.now());
+    this.lastNotifiedAtByMeetingId.set(meeting.id, Date.now());
     store.setDetectedMeeting(meeting);
     store.setMeetingNotificationVisible(true);
 
     // Fire a real OS-level notification (Windows Action Center, etc.) in
     // addition to the in-app banner. This is what actually alerts the user
     // when Mirai Granola is in the background/unfocused — the in-app banner
-    // alone is only visible if the user happens to already be looking at
-    // the app window.
+    // handles the foreground case. Clicking the native notification brings
+    // the app window to focus (handled in main.ts).
     if (window.electronAPI?.showNativeNotification) {
       window.electronAPI
         .showNativeNotification({
-          title: `Meeting detected — ${meeting.source}`,
+          title: 'Meeting in progress',
           body: `${meeting.label}\nClick to open Mirai Granola and start taking notes.`,
         })
         .catch((err) => debugLog('Native notification failed', { error: String(err) }));
+    }
+    } finally {
+      this.isPolling = false;
     }
   }
 }

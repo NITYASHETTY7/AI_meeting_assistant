@@ -2,6 +2,11 @@ import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Sparkles, FileText, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useAppStore, type Meeting } from '../store/useAppStore';
 import { runAIGeneration } from '../services/ai/AIGenerationService';
+import { stripMarkdownSyntax } from '../services/ai/textSanitizer';
+
+/** Quick check for leftover markdown syntax from summaries generated before the sanitizer was added. */
+const hasMarkdownArtifacts = (text: string): boolean =>
+  /\*\*.+?\*\*|__.+?__|^#{1,6}\s|```|^\s*\|.*\|\s*$/m.test(text);
 
 interface SummaryPanelProps {
   meeting: Meeting;
@@ -33,11 +38,20 @@ export const SummaryPanel = ({ meeting, onGenerationComplete, naturalHeight = fa
   const [genError, setGenError] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync when active meeting changes or summary updates
+  // Sync when active meeting changes or summary updates. Summaries generated
+  // before the markdown sanitizer existed may still have literal **bold**/
+  // table syntax baked into stored content — clean those up transparently
+  // on load (and persist the cleaned version) rather than leaving old
+  // meetings permanently showing raw asterisks forever.
   useEffect(() => {
-    setContent(meeting.aiSummary);
-    setSaveState(meeting.aiSummary ? 'saved' : 'empty');
+    const raw = meeting.aiSummary;
+    const cleaned = raw && hasMarkdownArtifacts(raw) ? stripMarkdownSyntax(raw) : raw;
+    setContent(cleaned);
+    setSaveState(cleaned ? 'saved' : 'empty');
     setGenError('');
+    if (cleaned !== raw) {
+      updateAiSummary(meeting.id, cleaned);
+    }
   }, [meeting.id, meeting.aiSummary]);
 
   useEffect(() => {

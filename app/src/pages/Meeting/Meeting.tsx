@@ -1,14 +1,22 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ListTodo, MessageSquare, Sparkles, Plus, Bot } from 'lucide-react';
+import { ListTodo, MessageSquare, Sparkles, Plus, Bot, AlertCircle } from 'lucide-react';
 import { ContentLayout } from '../../components/ContentLayout';
 import { MeetingHeader } from '../../components/MeetingHeader';
 import { TranscriptPanel } from '../../components/TranscriptPanel';
+import { AdditionalNotes } from '../../components/AdditionalNotes';
 import { SummaryPanel } from '../../components/SummaryPanel';
 import { ActionItemsPanel } from '../../components/ActionItemsPanel';
 import { ShareMenu } from '../../components/ShareMenu';
 import { EmptyState } from '../../components/EmptyState';
 import { QuickActionButton } from '../../components/QuickActionButton';
+import { NoteTemplateSelector } from '../../components/NoteTemplateSelector';
+import { CandidateScorecard } from '../../components/CandidateScorecard';
+import { ClientRequirementsPanel } from '../../components/ClientRequirementsPanel';
+import { RecruitmentMetricsPanel } from '../../components/RecruitmentMetricsPanel';
+import { HrStrategyPanel } from '../../components/HrStrategyPanel';
+import { PerformanceFeedbackPanel } from '../../components/PerformanceFeedbackPanel';
+import { TeamRecapPanel } from '../../components/TeamRecapPanel';
 import { useAppStore } from '../../store/useAppStore';
 
 type WorkspaceTab = 'transcript' | 'summary';
@@ -32,7 +40,7 @@ type WorkspaceTab = 'transcript' | 'summary';
  */
 export const Meeting = () => {
   const navigate = useNavigate();
-  const { meetings, activeMeetingId, createMockNote, recordingStatus, isProcessingAI } =
+  const { meetings, activeMeetingId, createMockNote, recordingStatus, isProcessingAI, transcriptionStatus, lastTranscriptionError } =
     useAppStore();
 
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('transcript');
@@ -126,12 +134,28 @@ export const Meeting = () => {
             Recording
           </span>
         )}
+        {/* Transcription failure indicator — must NOT be gated on
+            recordingStatus === 'recording': post-recording providers
+            (AssemblyAI, Deepgram, Gemini) transcribe AFTER stop(), so a
+            failure here happens while recordingStatus is already 'stopped'.
+            Without this, a failed post-recording transcription was
+            previously silently swallowed with zero visible feedback. */}
+        {transcriptionStatus === 'error' && recordingStatus !== 'recording' && (
+          <span
+            title={lastTranscriptionError || 'Transcription failed. You can try recording again.'}
+            className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider cursor-default"
+            style={{ color: 'var(--warning)' }}
+          >
+            <AlertCircle className="w-3.5 h-3.5" />
+            Transcription failed
+          </span>
+        )}
         {recordingStatus === 'stopped' &&
           activeMeeting &&
           activeMeeting.transcript.length > 0 &&
           !activeMeeting.aiSummary &&
           !isProcessingAI && (
-            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--warning)' }}>
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--success)' }}>
               Ready to summarise
             </span>
           )}
@@ -174,13 +198,15 @@ export const Meeting = () => {
     );
   }
 
-  // ── TRANSCRIPT tab — fixed-height, internal scroll ────────────────────────
+  // ── TRANSCRIPT tab — page scrolls as one unit, transcript card keeps its
+  //    full intended height (does not shrink to make room for Additional
+  //    Notes below it) ─────────────────────────────────────────────────────
   if (activeTab === 'transcript') {
     return (
       <ContentLayout
         title="Meeting Workspace"
         description="Record, transcribe, and generate AI summaries for your meetings."
-        fullHeight={true}
+        fullHeight={false}
         headerActions={
           <QuickActionButton
             label="New Note"
@@ -190,15 +216,14 @@ export const Meeting = () => {
           />
         }
       >
-        <div className="flex flex-col flex-1 min-h-0 gap-4">
+        <div className="flex flex-col gap-4 pb-6">
           {/* Header with recording controls built-in */}
-          <div className="shrink-0">
-            <MeetingHeader meeting={activeMeeting} />
-          </div>
-          <div className="shrink-0">{renderTabBar()}</div>
-          <div className="flex-1 min-h-0">
+          <MeetingHeader meeting={activeMeeting} />
+          {renderTabBar()}
+          <div className="h-[65vh] min-h-[420px]">
             <TranscriptPanel meeting={activeMeeting} />
           </div>
+          <AdditionalNotes meeting={activeMeeting} />
         </div>
       </ContentLayout>
     );
@@ -221,7 +246,39 @@ export const Meeting = () => {
     >
       <div className="flex flex-col gap-4 pb-6">
         <MeetingHeader meeting={activeMeeting} />
+        
+        {/* Template Selector & Toolbar matching Granola UI */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/60 dark:border-zinc-700/50">
+          <NoteTemplateSelector meetingId={activeMeeting.id} currentTemplateId={activeMeeting.templateId} />
+        </div>
+
         {renderTabBar()}
+
+        {/* Specialized Meeting Rubrics & Panels based on selected mode */}
+        {activeMeeting.templateId === 'interview' && (
+          <CandidateScorecard meetingId={activeMeeting.id} candidateInfo={activeMeeting.candidateInfo} />
+        )}
+
+        {activeMeeting.templateId === 'client' && (
+          <ClientRequirementsPanel meetingId={activeMeeting.id} clientInfo={activeMeeting.clientInfo} />
+        )}
+
+        {activeMeeting.templateId === 'recruitment_metrics' && (
+          <RecruitmentMetricsPanel meetingId={activeMeeting.id} recruitmentMetricsInfo={activeMeeting.recruitmentMetricsInfo} />
+        )}
+
+        {activeMeeting.templateId === 'hr_strategy' && (
+          <HrStrategyPanel meetingId={activeMeeting.id} hrStrategyInfo={activeMeeting.hrStrategyInfo} />
+        )}
+
+        {activeMeeting.templateId === 'performance_feedback' && (
+          <PerformanceFeedbackPanel meetingId={activeMeeting.id} performanceFeedbackInfo={activeMeeting.performanceFeedbackInfo} />
+        )}
+
+        {activeMeeting.templateId === 'team_recap' && (
+          <TeamRecapPanel meetingId={activeMeeting.id} teamRecapInfo={activeMeeting.teamRecapInfo} />
+        )}
+
         <SummaryPanel
           meeting={activeMeeting}
           onGenerationComplete={handleGenerationComplete}

@@ -105,36 +105,57 @@ const BROWSER_MEETING_RULES: BrowserMeetingRule[] = [
   // ─────────────────────────────────────────────────────────────────────────
 
   {
-    // FUTURE: Google Meet (any browser)
+    // Google Meet (any browser)
     source: 'Google Meet',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
-      /google meet/i,
-      /meet\.google\.com/i,
-      // Edge-specific combined: "... – Google Meet - Microsoft Edge"
-      /meet.*microsoft edge/i,
+      // Active meeting room pattern (e.g. "Meet – abc-defg-hij" or "Meet: Weekly Standup")
+      /\bmeet\s*[-–:]\s*[a-z0-9]/i,
+      /\bmeet\s*[-–:]\s*\S+/i,
+      /meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i,
+      /\bgoogle meet\b.*(call|meeting|\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b)/i,
+    ],
+    excludePatterns: [
+      // Landing page / tab groups / schedule home screen
+      /^google meet(\s*and\s*\d+\s*more\s*pages)?(\s*[-–]\s*.*)?$/i,
+      /meet\.google\.com\/home/i,
+      /sign\s*in.*meet/i,
     ],
   },
 
   {
-    // FUTURE: Zoom Web Client
+    // Zoom Web Client
     source: 'Zoom',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
       /zoom meeting/i,
-      /zoom\.us/i,
+      /zoom webinar/i,
       /zoom\s*[-–]\s*launch meeting/i,
+      /\bzoom\b.*(meeting|webinar|\/j\/\d+|\/wc\/\d+)/i,
+    ],
+    excludePatterns: [
+      /^zoom(\s*and\s*\d+\s*more\s*pages)?(\s*[-–]\s*.*)?$/i,
+      /zoom\.us\/(home|signin|signup|profile|schedule|pricing|plans)/i,
+      /sign\s*in.*zoom/i,
+      /zoom.*sign\s*in/i,
     ],
   },
 
   {
-    // FUTURE: Cisco Webex Web
+    // Cisco Webex Web
     source: 'Webex',
-    tier: 'future',
+    tier: 'v1',
     titlePatterns: [
-      /cisco webex/i,
       /webex meeting/i,
-      /webex\.com/i,
+      /cisco webex meeting/i,
+      /webex\s*[-–]\s*meeting/i,
+      /meet.*webex\.com\/meet/i,
+    ],
+    excludePatterns: [
+      /^cisco webex(\s*and\s*\d+\s*more\s*pages)?(\s*[-–]\s*.*)?$/i,
+      /webex\.com\/(home|signin|signup|pricing)/i,
+      /sign\s*in.*webex/i,
+      /webex.*sign\s*in/i,
     ],
   },
 ];

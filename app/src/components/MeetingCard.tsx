@@ -1,5 +1,11 @@
 import { Clock, Users, ArrowRight, Trash2 } from 'lucide-react';
 import type { MouseEvent } from 'react';
+import { useAppStore } from '../store/useAppStore';
+import { stripMarkdownSyntax } from '../services/ai/textSanitizer';
+
+/** Quick check for leftover markdown syntax from summaries generated before the sanitizer was added. */
+const hasMarkdownArtifacts = (text: string): boolean =>
+  /\*\*.+?\*\*|__.+?__|^#{1,6}\s|```|^\s*\|.*\|\s*$/m.test(text);
 
 interface MeetingCardProps {
   id: string;
@@ -24,51 +30,93 @@ export const MeetingCard = ({
   onClick,
   onDelete,
 }: MeetingCardProps) => {
+  const store = useAppStore();
+  const isCurrentlyRecording = store.recordingStatus === 'recording' && store.activeMeetingId === id;
+
+  const displayPreview = isCurrentlyRecording
+    ? '🔴 Recording in progress…'
+    : preview === 'Recording in progress…' || !preview
+    ? 'No summary generated yet.'
+    : hasMarkdownArtifacts(preview)
+    ? stripMarkdownSyntax(preview)
+    : preview;
+
   const handleDelete = (e: MouseEvent) => {
     e.stopPropagation();
     onDelete(id);
   };
 
+  const meetingData = store.meetings.find((m) => m.id === id);
+  const distinct = new Set<string>(participants && participants.length > 0 ? participants : ['You']);
+  if (meetingData?.transcript) {
+    meetingData.transcript.forEach((t) => {
+      if (t.speaker) {
+        distinct.add(t.speaker === 'Speaker' ? 'Other Participant' : t.speaker);
+      }
+    });
+  }
+  const effectiveParticipants = Array.from(distinct);
+
   return (
     <div
       onClick={onClick}
-      className="group relative flex flex-col justify-between p-5 cursor-pointer select-none mg-glass-card mg-glass-hover"
+      className="group relative flex flex-col justify-between p-5 rounded-2xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5"
+      style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-sm)',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = 'var(--border-strong)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'var(--border)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
+      }}
     >
-      {/* Header metas */}
       <div>
-        <div className="flex items-center justify-between text-[11px] font-semibold mb-2.5"
-             style={{ color: 'var(--text-muted)' }}>
-          <div className="flex items-center gap-2">
-            <span>{date}</span>
-            <span>·</span>
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" /> {time} ({duration})
+        {/* Top row: Date & Time + Delete button */}
+        <div className="flex items-center justify-between text-xs mb-3 select-none" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex items-center gap-1.5 font-medium">
+            <Clock className="w-3.5 h-3.5" style={{ color: 'var(--text-disabled)' }} />
+            <span>
+              {date} · {time} {duration && duration !== '0m' ? `(${duration})` : ''}
             </span>
           </div>
+
           <button
             onClick={handleDelete}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded-md transition-all duration-150 cursor-pointer"
-            style={{ color: 'var(--text-muted)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--error)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-            title="Delete note"
+            title="Delete meeting"
+            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all cursor-pointer"
+            style={{ color: 'var(--text-disabled)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#60A5FA';
+              e.currentTarget.style.background = 'rgba(59, 130, 246, 0.12)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-disabled)';
+              e.currentTarget.style.background = 'transparent';
+            }}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <h4
-          className="text-sm font-bold mb-1.5 leading-snug transition-colors duration-150"
+        {/* Title */}
+        <h3
+          className="text-base font-semibold leading-snug tracking-tight mb-2 line-clamp-1"
           style={{ color: 'var(--text-primary)' }}
         >
           {title}
-        </h4>
+        </h3>
 
+        {/* Preview text */}
         <p
           className="text-xs leading-relaxed line-clamp-2"
           style={{ color: 'var(--text-tertiary)' }}
         >
-          {preview || 'No summary generated yet.'}
+          {displayPreview}
         </p>
       </div>
 
@@ -80,11 +128,11 @@ export const MeetingCard = ({
         <div className="flex items-center gap-1.5 text-[11px] font-medium">
           <Users className="w-3.5 h-3.5" style={{ color: 'var(--text-disabled)' }} />
           <span>
-            {participants.length === 0
+            {effectiveParticipants.length === 0
               ? 'No participants'
-              : participants.length === 1
-              ? 'Only you'
-              : `${participants.length} participants`}
+              : effectiveParticipants.length === 1
+              ? (effectiveParticipants[0] === 'You' ? 'Only you' : effectiveParticipants[0])
+              : `${effectiveParticipants.length} participants`}
           </span>
         </div>
         <ArrowRight

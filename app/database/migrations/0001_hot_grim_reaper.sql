@@ -1,0 +1,1 @@
+ALTER TABLE `meetings` ADD `additional_notes` text DEFAULT '' NOT NULL;
