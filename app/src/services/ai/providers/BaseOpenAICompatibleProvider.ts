@@ -186,8 +186,10 @@ export abstract class BaseOpenAICompatibleProvider {
   async chat(messages: unknown[]): Promise<string> {
     const candidates = [
       this.resolveModel(),
-      'groq/compound-mini',
-      'groq/compound',
+      'llama-3.3-70b-versatile',
+      'deepseek-r1-distill-llama-70b',
+      'gpt-4o',
+      'gpt-4o-mini',
     ].filter((m): m is string => !!m && !m.includes('gemma') && !m.includes('mixtral') && !m.includes('qwen'));
 
     const uniqueCandidates = [...new Set(candidates)];
@@ -226,13 +228,15 @@ export abstract class BaseOpenAICompatibleProvider {
   private async extractFromTranscript(transcript: string, instruction: string): Promise<string> {
     const candidates = [
       this.resolveModel(),
-      'groq/compound-mini',
-      'groq/compound',
+      'llama-3.3-70b-versatile',
+      'deepseek-r1-distill-llama-70b',
+      'gpt-4o',
+      'gpt-4o-mini',
     ].filter((m): m is string => !!m && !m.includes('gemma') && !m.includes('mixtral') && !m.includes('qwen'));
 
     const uniqueCandidates = [...new Set(candidates)];
     let lastError: Error | null = null;
-    const MAX_RATE_LIMIT_RETRIES = 2;
+    const MAX_RATE_LIMIT_RETRIES = 4;
 
     for (const model of uniqueCandidates) {
       let rateLimitRetries = 0;
@@ -263,15 +267,16 @@ export abstract class BaseOpenAICompatibleProvider {
           lastError = err instanceof Error ? err : new Error(String(err));
           const msg = lastError.message.toLowerCase();
 
-          // Several parallel extraction calls (summary/title/action items/decisions/
-          // follow-ups) can collectively exceed a provider's tokens-per-minute limit
-          // even when each individual call is well within it. Rather than failing
-          // the whole generation outright, back off for exactly as long as the
-          // provider asked (or a short default) and retry a couple of times —
-          // this is usually enough for the shared TPM window to reset.
-          const isRateLimit = (lastError as Error & { isRateLimit?: boolean }).isRateLimit;
+          // Check if error is rate limit (429 or TPM limit message)
+          const isRateLimit = (lastError as Error & { isRateLimit?: boolean }).isRateLimit || msg.includes('rate limit') || msg.includes('429');
           if (isRateLimit && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
-            const retryAfterMs = (lastError as Error & { retryAfterMs?: number }).retryAfterMs ?? 3000;
+            let retryAfterMs = (lastError as Error & { retryAfterMs?: number }).retryAfterMs;
+            if (!retryAfterMs) {
+              const match = msg.match(/try again in\s+([\d.]+)\s*s/i);
+              retryAfterMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : (rateLimitRetries + 1) * 3000;
+            }
+            // Add 1000ms safety buffer
+            retryAfterMs += 1000;
             rateLimitRetries++;
             console.warn(
               `[BaseOpenAICompatibleProvider] Rate limited on ${model}, retrying in ${retryAfterMs}ms ` +
@@ -319,13 +324,13 @@ export abstract class BaseOpenAICompatibleProvider {
   async extractActionItems(transcript: string): Promise<string[]> {
     const raw = await this.extractFromTranscript(
       transcript,
-      'Extract all action items from the transcript. ' +
-      'Return each item on its own line starting with "- ". Include the owner if mentioned.'
+      'Extract all action items, tasks, commitments, and next steps from the transcript. ' +
+      'If specific owners are not mentioned, list the concrete next steps. Return each item on its own line starting with "- ".'
     );
     return raw
       .split('\n')
       .map((l) => l.replace(/^[-*•]\s*/, '').trim())
-      .filter(Boolean);
+      .filter((l) => Boolean(l) && !l.toLowerCase().includes('no action item') && !l.toLowerCase().includes('none identified'));
   }
 
   async extractDecisions(transcript: string): Promise<string[]> {

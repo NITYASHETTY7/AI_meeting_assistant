@@ -25,9 +25,10 @@ const formatDeletedAt = (ms?: number): string => {
 };
 
 export const Bin = () => {
-  const { deletedMeetings, isBinHydrated, hydrateBinFromDb, restoreMeeting, permanentlyDeleteMeeting } = useAppStore();
+  const { deletedMeetings, isBinHydrated, hydrateBinFromDb, restoreMeeting, permanentlyDeleteMeeting, emptyBin } = useAppStore();
   const [search, setSearch] = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [isConfirmingEmpty, setIsConfirmingEmpty] = useState(false);
 
   useEffect(() => {
     if (!isBinHydrated) {
@@ -56,10 +57,34 @@ export const Bin = () => {
     setConfirmingId(null);
   };
 
+  const handleEmptyBin = () => {
+    if (!isConfirmingEmpty) {
+      setIsConfirmingEmpty(true);
+      return;
+    }
+    emptyBin();
+    setIsConfirmingEmpty(false);
+  };
+
   return (
     <ContentLayout
       title="Bin"
       description="Deleted meetings are kept here until you restore or permanently delete them."
+      headerActions={
+        deletedMeetings.length > 0 ? (
+          <button
+            onClick={handleEmptyBin}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+              isConfirmingEmpty
+                ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-sm'
+                : 'text-zinc-600 dark:text-zinc-400 bg-zinc-100 hover:bg-rose-50 hover:text-rose-600 dark:bg-zinc-800/80 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 border border-zinc-200 dark:border-zinc-700'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {isConfirmingEmpty ? 'Click to Confirm Empty' : 'Empty Bin'}
+          </button>
+        ) : undefined
+      }
     >
       <div className="space-y-6 select-none">
         <div className="flex flex-wrap items-center justify-between gap-3">

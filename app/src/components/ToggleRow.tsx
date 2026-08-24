@@ -4,10 +4,11 @@ interface ToggleRowProps {
   label: string;
   description?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }
 
-export const ToggleRow = ({ label, description, checked, onChange }: ToggleRowProps) => {
+export const ToggleRow = ({ label, description, checked, disabled = false, onChange }: ToggleRowProps) => {
   return (
     <SettingsRow
       label={label}
@@ -15,12 +16,15 @@ export const ToggleRow = ({ label, description, checked, onChange }: ToggleRowPr
       control={
         <button
           type="button"
-          onClick={() => onChange(!checked)}
-          className="w-9 h-5 rounded-full relative transition-all duration-200 cursor-pointer focus:outline-none"
+          disabled={disabled}
+          onClick={() => !disabled && onChange(!checked)}
+          className={`w-9 h-5 rounded-full relative transition-all duration-200 focus:outline-none ${
+            disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+          }`}
           style={{
             background: checked ? 'var(--accent)' : 'var(--bg-hover)',
             border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-            boxShadow: checked ? '0 0 0 2px var(--accent-subtle)' : 'none',
+            boxShadow: checked && !disabled ? '0 0 0 2px var(--accent-subtle)' : 'none',
           }}
           aria-checked={checked}
           role="switch"

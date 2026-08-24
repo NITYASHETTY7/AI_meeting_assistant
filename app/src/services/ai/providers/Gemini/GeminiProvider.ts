@@ -55,7 +55,7 @@ export class GeminiProvider implements AIProvider {
     return res.json() as Promise<T>;
   }
 
-  private async postJson<T>(path: string, body: unknown, retriesLeft = 2): Promise<T> {
+  private async postJson<T>(path: string, body: unknown, retriesLeft = 3): Promise<T> {
     const url = `${this.BASE_URL}${path}?key=${encodeURIComponent(this.apiKey)}`;
     const res = await fetch(url, {
       method: 'POST',
@@ -64,14 +64,10 @@ export class GeminiProvider implements AIProvider {
     });
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      // 500/503 from Google's own infrastructure are typically transient
-      // (momentary overload) rather than a problem with the request itself
-      // — retrying a couple of times with a short backoff avoids forcing
-      // the user to re-record an entire meeting just because one upload
-      // request happened to land during a brief outage.
-      if ((res.status === 503 || res.status === 500) && retriesLeft > 0) {
-        const delayMs = 1500 * (3 - retriesLeft);
-        console.warn(`[GeminiProvider] ${res.status} from Gemini, retrying in ${delayMs}ms (${retriesLeft} attempt(s) left)...`);
+      // 500/503/429 from Google's infrastructure are typically transient
+      if ((res.status === 503 || res.status === 500 || res.status === 429) && retriesLeft > 0) {
+        const delayMs = 2000 * (4 - retriesLeft);
+        console.warn(`[GeminiProvider] HTTP ${res.status} from Gemini, retrying in ${delayMs}ms (${retriesLeft} attempt(s) left)...`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         return this.postJson<T>(path, body, retriesLeft - 1);
       }
@@ -223,9 +219,9 @@ export class GeminiProvider implements AIProvider {
 
   async extractActionItems(transcript: string): Promise<string[]> {
     const raw = await this.generate(
-      `Extract all action items from this meeting transcript. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`
+      `Extract all action items, tasks, commitments, and next steps from this meeting transcript. If owners are not explicitly mentioned, list the concrete next steps. Return each on its own line starting with "- ".\n\nTranscript:\n${transcript}`
     );
-    return this.parseLines(raw);
+    return this.parseLines(raw).filter((l) => !l.toLowerCase().includes('no action item') && !l.toLowerCase().includes('none identified'));
   }
 
   async extractDecisions(transcript: string): Promise<string[]> {

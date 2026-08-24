@@ -191,10 +191,10 @@ export class AnthropicProvider implements AIProvider {
 
   async extractActionItems(transcript: string): Promise<string[]> {
     const raw = await this.sendMessage(
-      `Extract all action items from this meeting. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`,
+      `Extract all action items, tasks, commitments, and next steps from this meeting. If owners are not explicitly mentioned, list the concrete next steps. List each on its own line starting with "- ".\n\nTranscript:\n${transcript}`,
       this.plainTextSystemPrompt('Extract structured lists from meeting transcripts.')
     );
-    return this.parseLines(raw);
+    return this.parseLines(raw).filter((l) => !l.toLowerCase().includes('no action item') && !l.toLowerCase().includes('none identified'));
   }
 
   async extractDecisions(transcript: string): Promise<string[]> {

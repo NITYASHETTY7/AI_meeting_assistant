@@ -51,44 +51,50 @@ export class GroqProvider extends BaseOpenAICompatibleProvider {
   }
 
   protected filterModels(ids: string[]): string[] {
-    // Filter out audio-only and TTS models — keep only chat-capable models
+    // Filter out audio-only and TTS models — keep only chat/text models
     const AUDIO_ONLY = ['whisper', 'orpheus', 'guard', 'tts', 'speech'];
     const chatModels = ids.filter(
       (id) => !AUDIO_ONLY.some((skip) => id.toLowerCase().includes(skip))
     );
 
-    if (chatModels.length === 0) {
-      return ['groq/compound-mini', 'groq/compound'];
-    }
+    const standardLlamaModels = [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'deepseek-r1-distill-llama-70b',
+      'llama3-70b-8192',
+      'llama3-8b-8192',
+    ];
 
-    // Sort: compound-mini first (Groq's recommended fast model), compound second,
-    // llama third (if available on the plan), everything else after
-    return chatModels.sort((a, b) => {
+    // Combine models and prioritize standard Llama models
+    const allModels = Array.from(new Set([...chatModels, ...standardLlamaModels]));
+
+    return allModels.sort((a, b) => {
       const score = (id: string) =>
-        id === 'groq/compound-mini' ? 0
-        : id === 'groq/compound' ? 1
-        : id.includes('llama') ? 2
-        : 3;
+        id === 'llama-3.3-70b-versatile' ? 0
+        : id === 'llama-3.1-8b-instant' ? 1
+        : id === 'deepseek-r1-distill-llama-70b' ? 2
+        : id.toLowerCase().includes('llama') ? 3
+        : id.includes('compound') ? 10
+        : 5;
       return score(a) - score(b);
     });
   }
 
   protected override resolveModel(): string {
     const raw = this.config?.defaultModel || useAppStore.getState().model;
-    // Block known-decommissioned models
     if (raw && !raw.includes('gemma') && !raw.includes('mixtral') && !raw.includes('qwen')) {
       return raw;
     }
-    return 'groq/compound-mini';
+    return 'llama-3.3-70b-versatile';
   }
 
   protected pickDefaultModel(ids: string[]): string {
     return (
-      ids.find((id) => id === 'groq/compound-mini') ??
-      ids.find((id) => id === 'groq/compound') ??
-      ids.find((id) => id.includes('llama')) ??
+      ids.find((id) => id === 'llama-3.3-70b-versatile') ??
+      ids.find((id) => id === 'llama-3.1-8b-instant') ??
+      ids.find((id) => id.toLowerCase().includes('llama')) ??
       ids[0] ??
-      'groq/compound-mini'
+      'llama-3.3-70b-versatile'
     );
   }
 

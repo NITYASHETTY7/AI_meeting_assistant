@@ -85,22 +85,30 @@ function App() {
           }
         }
 
+        for (const p of foundProviders) {
+          try {
+            const loadResult = await api.loadCredential?.(p);
+            if (loadResult?.ok && loadResult.secret) {
+              useAppStore.getState().setApiKeyForProvider(p, loadResult.secret);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const currentProviderHasKey = foundProviders.includes(provider);
         if (!currentProviderHasKey && foundProviders.length > 0) {
           const nextProvider = foundProviders[0];
           setProvider(nextProvider);
-          // Load the key into memory immediately so ProviderManager can
-          // authenticate right away — without this the provider would be
-          // selected but have an empty apiKeys entry until the user
-          // happens to visit Settings (which has its own separate
-          // credential-load effect, but only while that page is mounted).
-          try {
-            const loadResult = await api.loadCredential?.(nextProvider);
-            if (loadResult?.ok && loadResult.secret) {
-              useAppStore.getState().setApiKeyForProvider(nextProvider, loadResult.secret);
-            }
-          } catch {
-            // ignore — Settings page will retry this on visit
+        }
+
+        const state = useAppStore.getState();
+        const sttProviders = ProviderManager.getSTTProviders();
+        const currentSttHasKey = foundProviders.includes(state.sttProvider);
+        if (!currentSttHasKey) {
+          const matchingStt = foundProviders.find((p) => sttProviders.includes(p));
+          if (matchingStt) {
+            state.setSttProvider(matchingStt);
           }
         }
       } catch (err) {

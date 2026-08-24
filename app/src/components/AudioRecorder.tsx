@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Mic, Volume2, Square, Play, Pause, Circle, X, Check, ShieldAlert, Radio } from 'lucide-react';
+import { Mic, Volume2, Square, Play, Pause, Circle, X, Check, Radio, Sparkles } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { AudioManager } from '../services/audio/AudioManager';
+import { POST_RECORDING_ONLY_PROVIDERS } from '../services/transcription/TranscriptionManager';
 
 /**
  * AudioRecorder
@@ -350,21 +351,20 @@ export const AudioRecorder = () => {
         </div>
       )}
 
-      {/* Provider STT capability warning */}
-      {!store.capabilities.speech_to_text &&
+      {/* Post-recording transcription informational note */}
+      {POST_RECORDING_ONLY_PROVIDERS.includes(store.sttProvider || store.provider) &&
         (store.recordingStatus === 'recording' || store.recordingStatus === 'stopped') && (
           <div
             className="p-3 text-xs rounded-lg font-medium flex items-center gap-2"
             style={{
-              background: 'var(--warning-bg)',
-              border: '1px solid var(--warning-border)',
-              color: 'var(--warning)',
+              background: 'var(--accent-subtle)',
+              border: '1px solid var(--accent-border)',
+              color: 'var(--text-primary)',
             }}
           >
-            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <Sparkles className="w-4 h-4 text-cyan-500 shrink-0" />
             <span>
-              {store.provider} does not support live transcription. Recording continues normally.
-              Generate the AI summary after stopping to process the transcript.
+              {store.sttProvider || store.provider} transcribes audio with native speaker diarization once you stop the recording.
             </span>
           </div>
         )}

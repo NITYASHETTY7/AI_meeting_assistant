@@ -4,7 +4,10 @@ import type {
   AuthenticationResult,
   LiveTranscriptionOptions,
   DiarizedUtterance,
+  SpeakerTrack,
 } from '../../AIProvider';
+import type { AttributedSegment } from '../../../audio/AudioSourceAttribution';
+import { LiveTranscriptionEngine } from '../../LiveTranscriptionEngine';
 
 /**
  * Minimum derived per-utterance confidence to keep. Deepgram doesn't
@@ -18,28 +21,26 @@ import type {
 const MIN_UTTERANCE_CONFIDENCE = 0.4;
 
 /**
- * Deepgram Provider — speech-to-text specialist, used two ways in this app:
- *
- *  1. As a selectable provider in Settings (like AssemblyAI) — BYO Deepgram
- *     key, transcription-only (no chat/summary — Deepgram has no LLM).
- *
- *  2. As an automatic FALLBACK for live transcription batches when the
- *     active provider's Whisper call fails (401, rate limit, network error,
- *     etc). See TranscriptionManager's fallback wiring — this lets a
- *     transient OpenAI/Groq failure recover via Deepgram instead of losing
- *     that batch's audio and showing a bare "Transcript error".
- *
- * Endpoint: POST https://api.deepgram.com/v1/listen
- * Auth: `Authorization: Token <key>` (not "Bearer")
- * Diarization: `diarize=true&punctuate=true&utterances=true` query params
- *   return `results.utterances[]`, each with speaker/transcript/start/end —
- *   confirmed against Deepgram's own documentation.
+ * Deepgram Provider — speech-to-text specialist with live streaming
+ * and post-recording diarization.
  */
 export class DeepgramProvider implements AIProvider {
   private config?: ProviderConfig;
   private readonly BASE_URL = 'https://api.deepgram.com/v1/listen';
   private readonly MODELS = ['nova-3', 'nova-2', 'base'];
   private lastUtterances: DiarizedUtterance[] = [];
+  private liveEngine: LiveTranscriptionEngine;
+
+  constructor() {
+    this.liveEngine = new LiveTranscriptionEngine(
+      async (blob: Blob) => {
+        const text = await this.transcribeBlob(blob);
+        return { text };
+      },
+      44100
+    );
+  }
+
   initialize(config: ProviderConfig): void {
     this.config = config;
   }
@@ -164,29 +165,24 @@ export class DeepgramProvider implements AIProvider {
     }
 
     try {
-      // IMPORTANT: /v1/projects (Deepgram's management API) does NOT return
-      // CORS headers for browser-origin requests — calling it from Electron's
-      // renderer throws a generic "TypeError: Failed to fetch" with no
-      // useful status code, which is indistinguishable from a real network
-      // failure and easy to misdiagnose as "the key must be wrong".
-      // Confirmed via direct testing: /v1/projects returns 405 on OPTIONS
-      // preflight and no access-control-allow-origin header, while /v1/listen
-      // (the actual transcription endpoint) correctly reflects the request
-      // origin in access-control-allow-origin. Use /v1/listen with an empty
-      // body for the auth check instead — a bad key returns 401 with
-      // "Invalid credentials." in the body, same signal, but CORS-safe.
+      // Send a minimal valid 44-byte silent WAV header so Deepgram returns 200 OK
+      // without throwing a 400 Bad Request in the DevTools console.
+      const silentWav = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+        0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
+        0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00
+      ]);
+
       const res = await fetch(`${this.BASE_URL}?model=nova-3`, {
         method: 'POST',
         headers: {
           Authorization: `Token ${this.apiKey}`,
           'Content-Type': 'audio/wav',
         },
-        body: new Uint8Array(0),
+        body: silentWav,
       });
-      // A 400 (empty/invalid audio body) still means the key was accepted —
-      // only 401/403 indicate an auth failure. Any other status is treated
-      // as "reachable and authenticated" for the purposes of this check.
-      if (res.status === 401 || res.status === 403) {
+      if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw this.mapError(res.status, body);
       }
@@ -266,11 +262,19 @@ export class DeepgramProvider implements AIProvider {
   }
 
   // ── Live streaming ──────────────────────────────────────────────────────────
-  // Deepgram's real-time streaming uses a WebSocket endpoint. Not wired into
-  // this app's renderer-side batching engine — used only for post-recording
-  // batch transcription (both as a selectable provider and as the automatic
-  // fallback for other providers' failed live batches).
-  async startLiveTranscription(_options: LiveTranscriptionOptions): Promise<void> { /* no-op */ }
-  async stopLiveTranscription(): Promise<void> { /* no-op */ }
-  async transcribeAudioChunk(_chunk: Float32Array): Promise<void> { /* no-op */ }
+  async startLiveTranscription(options: LiveTranscriptionOptions): Promise<void> {
+    await this.liveEngine.start(options);
+  }
+
+  async stopLiveTranscription(): Promise<void> {
+    await this.liveEngine.stop();
+  }
+
+  async transcribeAudioChunk(
+    chunk: Float32Array,
+    speakerTrack?: SpeakerTrack,
+    attribution?: AttributedSegment
+  ): Promise<void> {
+    await this.liveEngine.processChunk(chunk, speakerTrack, attribution);
+  }
 }

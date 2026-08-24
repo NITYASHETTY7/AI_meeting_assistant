@@ -12,6 +12,27 @@ import { OllamaProvider } from './providers/Ollama/OllamaProvider';
 import { CustomOpenAIProvider } from './providers/CustomOpenAI/CustomOpenAIProvider';
 import type { AIProvider } from './AIProvider';
 
+export const STT_PROVIDERS = [
+  'Deepgram',
+  'Groq',
+  'OpenAI',
+  'AssemblyAI',
+  'Gemini',
+  'Azure OpenAI'
+];
+
+export const AI_PROVIDERS = [
+  'Anthropic',
+  'OpenAI',
+  'Groq',
+  'Gemini',
+  'OpenRouter',
+  'Ollama',
+  'Azure OpenAI',
+  'AWS Bedrock',
+  'Custom OpenAI-Compatible'
+];
+
 export class ProviderManager {
   private static instances: Record<string, AIProvider> = {
     'OpenAI': new OpenAIProvider(),
@@ -28,11 +49,42 @@ export class ProviderManager {
   };
 
   /**
-   * Retrieves and initializes the active provider from the Zustand store.
+   * Returns an initialized STT (Speech-to-Text) provider instance based on user settings.
+   */
+  static getSTTProvider(): AIProvider {
+    const state = useAppStore.getState();
+    const providerName = state.sttProvider || (STT_PROVIDERS.includes(state.provider) ? state.provider : 'Groq');
+
+    const provider = this.instances[providerName];
+    if (!provider) {
+      throw new Error(`STT Provider "${providerName}" is not registered in ProviderManager.`);
+    }
+
+    const apiKey = state.apiKeys[providerName] || '';
+    const baseUrl = state.baseUrls[providerName] || '';
+    const model = state.sttModel || state.cachedModels[providerName]?.[0] || '';
+
+    provider.initialize({
+      provider: providerName,
+      apiKey,
+      baseUrl,
+      defaultModel: model,
+
+      // Azure OpenAI parameters
+      azureEndpoint: state.azureEndpoint,
+      azureDeploymentName: state.azureDeploymentName,
+      azureApiVersion: state.azureApiVersion
+    });
+
+    return provider;
+  }
+
+  /**
+   * Retrieves and initializes the active AI provider from the Zustand store.
    */
   static getActiveProvider(): AIProvider {
     const state = useAppStore.getState();
-    const providerName = state.provider;
+    const providerName = state.aiProvider || state.provider;
 
     const provider = this.instances[providerName];
     if (!provider) {
@@ -66,10 +118,7 @@ export class ProviderManager {
   /**
    * Returns an initialized Deepgram provider instance for use as an
    * automatic transcription fallback, independent of whichever provider is
-   * currently "active" in Settings. Returns null if no Deepgram API key has
-   * been saved — callers should skip the fallback attempt in that case
-   * rather than surfacing a confusing "Deepgram key missing" error for a
-   * feature the user never opted into.
+   * currently "active" in Settings.
    */
   static getFallbackDeepgramProvider(): AIProvider | null {
     const state = useAppStore.getState();
@@ -93,29 +142,57 @@ export class ProviderManager {
   }
 
   /**
+   * Returns list of STT provider names.
+   */
+  static getSTTProviders(): string[] {
+    return STT_PROVIDERS;
+  }
+
+  /**
+   * Returns list of AI / LLM provider names.
+   */
+  static getAIProviders(): string[] {
+    return AI_PROVIDERS;
+  }
+
+  /**
+   * Alias for getChatProvider().
+   */
+  static getAIProvider(): AIProvider {
+    return this.getChatProvider();
+  }
+
+  /**
    * Returns a chat-capable provider regardless of which STT provider is active.
-   * Priority:
-   *   1. The active provider if it has a chat model (OpenAI, Groq, Anthropic, etc.)
-   *   2. Any other provider that has an API key saved and supports chat
-   *   3. Groq as the last resort (always has compound-mini)
    */
   static getChatProvider(): AIProvider {
     const state = useAppStore.getState();
-    const activeProviderName = state.provider;
+    const activeProviderName = state.aiProvider || state.provider;
 
-    // Chat-capable providers in preference order
-    const CHAT_PROVIDERS = [
-      'OpenAI', 'Groq', 'Anthropic', 'Gemini', 'Azure OpenAI',
-      'OpenRouter', 'AWS Bedrock', 'Ollama', 'Custom OpenAI-Compatible',
-    ];
+    // 1. Try active AI provider first if it's chat-capable
+    if (AI_PROVIDERS.includes(activeProviderName)) {
+      const provider = this.instances[activeProviderName];
+      if (provider) {
+        provider.initialize({
+          provider: activeProviderName,
+          apiKey: state.apiKeys[activeProviderName] || '',
+          baseUrl: state.baseUrls[activeProviderName] || '',
+          defaultModel: state.model || state.cachedModels?.[activeProviderName]?.[0] || '',
+          
+          awsAccessKeyId: state.awsAccessKeyId,
+          awsSecretAccessKey: state.awsSecretAccessKey,
+          awsRegion: state.awsRegion,
 
-    // 1. Try active provider first if it's chat-capable
-    if (CHAT_PROVIDERS.includes(activeProviderName)) {
-      return this.getActiveProvider();
+          azureEndpoint: state.azureEndpoint,
+          azureDeploymentName: state.azureDeploymentName,
+          azureApiVersion: state.azureApiVersion
+        });
+        return provider;
+      }
     }
 
     // 2. Active provider is STT-only (AssemblyAI / Deepgram) — find another with a key
-    for (const name of CHAT_PROVIDERS) {
+    for (const name of AI_PROVIDERS) {
       const key = state.apiKeys[name];
       if (!key) continue;
       const provider = this.instances[name];
@@ -129,7 +206,7 @@ export class ProviderManager {
       return provider;
     }
 
-    // 3. Absolute fallback — return Groq even without a key (will surface a useful error)
+    // 3. Absolute fallback — return active provider
     return this.getActiveProvider();
   }
 }

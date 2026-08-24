@@ -17,6 +17,7 @@ import { ProviderManager } from '../services/ai/ProviderManager';
 interface ProviderQuickSelectProps {
   value: string;
   onChange: (value: string) => void;
+  providers?: string[];
 }
 
 /** Icon shown per provider. Falls back to a generic icon for anything not listed. */
@@ -37,18 +38,11 @@ const PROVIDER_ICONS: Record<string, typeof Sparkles> = {
 /**
  * ProviderQuickSelect
  *
- * Icon-pill row for fast provider switching, inspired by OpenWhispr's
- * provider selector. Sits above the full AI Provider dropdown — the
- * dropdown remains the source of truth and shows the same list; these pills
- * are just a faster way to switch between the providers you use often.
- *
- * Each pill shows a small "key saved" checkmark if a credential already
- * exists for that provider in the OS credential store, without ever
- * revealing the key itself (masked key preview, not the value).
+ * Icon-pill row for fast provider switching.
  */
-export const ProviderQuickSelect = ({ value, onChange }: ProviderQuickSelectProps) => {
+export const ProviderQuickSelect = ({ value, onChange, providers: customProviders }: ProviderQuickSelectProps) => {
   const savedKeyProviders = useAppStore((state) => state.savedKeyProviders);
-  const providers = ProviderManager.getSupportedProviders();
+  const providers = customProviders || ProviderManager.getSupportedProviders();
 
   return (
     <div className="flex flex-wrap gap-2 p-4" style={{ borderBottom: '1px solid var(--border)' }}>

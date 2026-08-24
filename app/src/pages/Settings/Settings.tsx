@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Loader2 } from 'lucide-react';
+import { Check, X, Loader2, Mic, Sparkles } from 'lucide-react';
 import { ContentLayout } from '../../components/ContentLayout';
 import { SettingsLayout, type SettingsTab } from '../../components/SettingsLayout';
 import { SettingsSection } from '../../components/SettingsSection';
@@ -11,66 +11,64 @@ import { ThemeSelector } from '../../components/ThemeSelector';
 import { ToggleRow } from '../../components/ToggleRow';
 import { DropdownRow } from '../../components/DropdownRow';
 import { ActionButton } from '../../components/ActionButton';
-import { useAppStore, DEFAULT_PROVIDER_MODELS } from '../../store/useAppStore';
+import { useAppStore, DEFAULT_PROVIDER_MODELS, DEFAULT_STT_MODELS } from '../../store/useAppStore';
 import { ProviderManager } from '../../services/ai/ProviderManager';
 import { POST_RECORDING_ONLY_PROVIDERS } from '../../services/transcription/TranscriptionManager';
 
 export const Settings = () => {
   const store = useAppStore();
   
-  // Connection Test States (synchronized with store status)
+  // AI Connection Test States
   const [testState, setTestState] = useState<'idle' | 'testing' | 'success' | 'failed'>(store.connectionStatus);
   const [testErrorMessage, setTestErrorMessage] = useState('');
-  /**
-   * Explains what a successful connection actually gets the user for THIS
-   * provider — e.g. AssemblyAI/Deepgram authenticate fine but have no chat
-   * model at all, and Gemini/AssemblyAI/Deepgram only produce a transcript
-   * after the recording stops, not live. A bare "Connection Succeeded!" is
-   * technically true for all of these but misleads the user into expecting
-   * capabilities (a chat tab, a live transcript) the provider doesn't have.
-   */
   const [testCapabilityMessage, setTestCapabilityMessage] = useState('');
 
-  // Sync testState with store on switch
+  // STT Connection Test States
+  const [sttTestState, setSttTestState] = useState<'idle' | 'testing' | 'success' | 'failed'>(store.sttConnectionStatus);
+  const [sttTestErrorMessage, setSttTestErrorMessage] = useState('');
+  const [sttTestCapabilityMessage, setSttTestCapabilityMessage] = useState('');
+
+  // Sync AI testState with store on switch
   useEffect(() => {
     setTestState(store.connectionStatus);
     setTestErrorMessage('');
     setTestCapabilityMessage('');
   }, [store.provider]);
 
-  // ── Startup / provider-switch credential check ─────────────────────────────
-  // Silently checks the OS credential store whenever the active provider changes.
-  // If a key exists, marks the provider as saved and loads the key into the
-  // in-memory apiKeys map so the AI provider can use it this session.
+  // Sync STT testState with store on switch
   useEffect(() => {
-    const checkCredential = async () => {
+    setSttTestState(store.sttConnectionStatus);
+    setSttTestErrorMessage('');
+    setSttTestCapabilityMessage('');
+  }, [store.sttProvider]);
+
+  // ── Startup / provider-switch credential check ─────────────────────────────
+  useEffect(() => {
+    const checkCredential = async (providerName: string) => {
       const api = window.electronAPI;
-      if (!api?.hasCredential) return;
+      if (!api?.hasCredential || !providerName) return;
 
       try {
-        const { ok, exists } = await api.hasCredential(store.provider);
+        const { ok, exists } = await api.hasCredential(providerName);
         if (!ok) return;
 
         if (exists) {
-          store.markProviderKeySaved(store.provider);
-
-          // Load the actual key into memory for the active session so the AI
-          // provider can authenticate. The key is never displayed.
-          const loadResult = await api.loadCredential?.(store.provider);
+          store.markProviderKeySaved(providerName);
+          const loadResult = await api.loadCredential?.(providerName);
           if (loadResult?.ok && loadResult.secret) {
-            store.setApiKeyForProvider(store.provider, loadResult.secret);
+            store.setApiKeyForProvider(providerName, loadResult.secret);
           }
         } else {
-          // Key was deleted externally (e.g. Credential Manager UI) — clear mark
-          store.clearProviderKeySaved(store.provider);
+          store.clearProviderKeySaved(providerName);
         }
       } catch {
         // IPC not available (browser dev mode) — no-op
       }
     };
 
-    checkCredential();
-  }, [store.provider]);
+    if (store.provider) void checkCredential(store.provider);
+    if (store.sttProvider) void checkCredential(store.sttProvider);
+  }, [store.provider, store.sttProvider]);
 
   // ── Storage paths: real, fetched from main process ──────────────────────────
   const [storagePaths, setStoragePaths] = useState<{ databasePath: string; recordingsPath: string } | null>(null);
@@ -133,18 +131,6 @@ export const Settings = () => {
     }
   };
 
-  /**
-   * Builds a short capability-explainer shown right after a successful
-   * connection test, so the user isn't left assuming a provider does more
-   * (or less) than it actually does:
-   *   - STT-only providers with no chat model at all (AssemblyAI, Deepgram)
-   *     — clarify summaries/chat won't work with this provider alone.
-   *   - Post-recording-only STT providers (AssemblyAI, Deepgram, Gemini)
-   *     — clarify the transcript appears after recording stops, not live.
-   *   - Chat-only providers with no transcription (Anthropic, AWS Bedrock,
-   *     Azure OpenAI, Ollama, OpenRouter, Custom OpenAI-Compatible)
-   *     — clarify recording continues but without a live/auto transcript.
-   */
   const buildCapabilityMessage = (
     providerName: string,
     capabilities: { chat: boolean; speech_to_text: boolean }
@@ -153,18 +139,12 @@ export const Settings = () => {
 
     if (capabilities.speech_to_text && !capabilities.chat) {
       return isPostRecordingOnly
-        ? `${providerName} is speech-to-text only — it doesn't provide AI capabilities like summaries or chat. Your transcript will appear once you stop recording, not live.`
-        : `${providerName} is speech-to-text only — it doesn't provide AI capabilities like summaries or chat.`;
+        ? `${providerName} is speech-to-text only. Your transcript will appear once you stop recording.`
+        : `${providerName} is speech-to-text only.`;
     }
 
     if (capabilities.speech_to_text && capabilities.chat && isPostRecordingOnly) {
-      return `${providerName} transcribes after recording stops, not live — your transcript will appear once you end the meeting.`;
-    }
-
-    if (!capabilities.speech_to_text && capabilities.chat) {
-      return `${providerName} has no speech-to-text — recording won't produce a transcript, live or after stopping. ` +
-        `Type notes manually during the meeting, and ${providerName} can still summarize those notes and extract action items. ` +
-        `You can also use it for general AI chat unrelated to any meeting.`;
+      return `${providerName} transcribes after recording stops. Your transcript will appear once you end the meeting.`;
     }
 
     return '';
@@ -176,14 +156,13 @@ export const Settings = () => {
     store.setConnectionStatus('testing');
 
     try {
-      const activeProvider = ProviderManager.getActiveProvider();
+      const activeProvider = ProviderManager.getAIProvider();
       const result = await activeProvider.authenticate();
       if (result.success) {
         setTestState('success');
         store.setConnectionStatus('success');
         store.setAvailableModels(result.models);
         store.setModel(result.defaultModel);
-        // Cache the models dynamically in Zustand store
         store.setCachedModelsForProvider(store.provider, result.models);
         store.setCapabilities(result.capabilities);
         setTestCapabilityMessage(buildCapabilityMessage(store.provider, result.capabilities));
@@ -202,6 +181,36 @@ export const Settings = () => {
       store.setConnectionStatus('failed');
       store.setAvailableModels([]);
       store.setModel('');
+    }
+  };
+
+  const handleTestSTTConnection = async () => {
+    setSttTestState('testing');
+    setSttTestErrorMessage('');
+    store.setSttConnectionStatus('testing');
+
+    try {
+      const sttProvider = ProviderManager.getSTTProvider();
+      const result = await sttProvider.authenticate();
+      if (result.success) {
+        setSttTestState('success');
+        store.setSttConnectionStatus('success');
+        const isPostRec = POST_RECORDING_ONLY_PROVIDERS.includes(store.sttProvider);
+        const msg = isPostRec
+          ? `${store.sttProvider} is ready. Full audio will be transcribed with speaker diarization once recording stops.`
+          : `${store.sttProvider} is ready. Meeting audio will be transcribed live during the recording.`;
+        setSttTestCapabilityMessage(msg);
+      } else {
+        setSttTestState('failed');
+        setSttTestErrorMessage(result.message);
+        setSttTestCapabilityMessage('');
+        store.setSttConnectionStatus('failed');
+      }
+    } catch (err: any) {
+      setSttTestState('failed');
+      setSttTestErrorMessage(err?.message || 'Verification aborted.');
+      setSttTestCapabilityMessage('');
+      store.setSttConnectionStatus('failed');
     }
   };
 
@@ -234,231 +243,333 @@ export const Settings = () => {
     }
   };
 
+  const isSharedKey = store.sttProvider === store.provider;
+
   return (
     <ContentLayout
       title="Settings"
-      description="Configure preferences, system defaults, and external LLM keys."
+      description="Configure preferences, system defaults, speech recognition, and external LLM keys."
     >
       <SettingsLayout>
         {(activeTab: SettingsTab) => {
           switch (activeTab) {
             case 'model':
               return (
-                <SettingsSection
-                  title="Large Language Model Provider"
-                  description="Mirai Granola processes transcript files using standard cloud platform adapters or custom API wrappers."
-                >
-                  <SettingsCard>
-                    <ProviderQuickSelect value={store.provider} onChange={store.setProvider} />
-
-                    {/* Provider Selection */}
-                    <DropdownRow
-                      label="AI Provider"
-                      description="Choose the Large Language Model provider to handle meeting summaries."
-                      value={store.provider}
-                      onChange={store.setProvider}
-                      options={ProviderManager.getSupportedProviders().map((p) => ({
-                        value: p,
-                        label: p,
-                      }))}
-                    />
-
-                    {/* Model Selection (hidden for AssemblyAI since it only transcribes) */}
-                    {store.provider !== 'AssemblyAI' && (() => {
-                      const validCachedModels = store.availableModels.filter(
-                        (m) => store.provider !== 'Groq' || (!m.includes('qwen') && !m.includes('gpt-'))
-                      );
-                      const activeModels = validCachedModels.length > 0
-                        ? validCachedModels
-                        : (DEFAULT_PROVIDER_MODELS[store.provider] || ['llama-3.3-70b-versatile']);
-                      
-                      const selectedModel = activeModels.includes(store.model)
-                        ? store.model
-                        : activeModels[0];
-
-                      return (
-                        <DropdownRow
-                          label="Default Model"
-                          description="Select the default model for summarization and action items."
-                          value={selectedModel}
-                          onChange={store.setModel}
-                          options={activeModels.map((m) => ({
-                            value: m,
-                            label: m,
-                          }))}
-                          disabled={false}
-                        />
-                      );
-                    })()}
-
-                    {/* Conditional API Key Input */}
-                    {(store.provider === 'OpenAI' ||
-                      store.provider === 'Azure OpenAI' ||
-                      store.provider === 'Anthropic' ||
-                      store.provider === 'Gemini' ||
-                      store.provider === 'Groq' ||
-                      store.provider === 'AssemblyAI' ||
-                      store.provider === 'Deepgram' ||
-                      store.provider === 'OpenRouter' ||
-                      store.provider === 'Custom OpenAI-Compatible') && (
-                      <ApiKeyInput provider={store.provider} />
-                    )}
-
-                    {/* Conditional Base URL Input */}
-                    {(store.provider === 'OpenRouter' ||
-                      store.provider === 'Ollama' ||
-                      store.provider === 'Custom OpenAI-Compatible') && (
-                      <SettingsRow
-                        label="Base URL"
-                        description={`The custom URL endpoint location for ${store.provider} API requests.`}
-                        control={
-                          <input
-                            type="text"
-                            value={store.baseUrls[store.provider] || ''}
-                            onChange={(e) => store.setBaseUrlForProvider(store.provider, e.target.value)}
-                            className="mg-input font-mono" style={{ minWidth: '240px' }}
-                          />
-                        }
+                <div className="space-y-6">
+                  {/* ── Section 1: Speech-to-Text Provider ── */}
+                  <SettingsSection
+                    title="1. Speech-to-Text (STT) Engine"
+                    description="Transcribes microphone and system audio into text, with speaker separation and timestamping."
+                  >
+                    <SettingsCard>
+                      <ProviderQuickSelect
+                        value={store.sttProvider}
+                        onChange={store.setSttProvider}
+                        providers={ProviderManager.getSTTProviders()}
                       />
-                    )}
 
-                    {/* Conditional AWS Bedrock configuration fields */}
-                    {store.provider === 'AWS Bedrock' && (
-                      <>
-                        <SettingsRow
-                          label="AWS Access Key ID"
-                          description="Your AWS Access Key Identifier credentials."
-                          control={
-                            <input
-                              type="text"
-                              value={store.awsAccessKeyId}
-                              onChange={(e) => store.setAwsAccessKeyId(e.target.value)}
-                              placeholder="AKIAIOSFODNN7EXAMPLE"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                        <SettingsRow
-                          label="AWS Secret Access Key"
-                          description="Your AWS Secret Access Key credentials."
-                          control={
-                            <input
-                              type="password"
-                              value={store.awsSecretAccessKey}
-                              onChange={(e) => store.setAwsSecretAccessKey(e.target.value)}
-                              placeholder="••••••••••••••••••••••••••••••••••••••••"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                        <SettingsRow
-                          label="AWS Region"
-                          description="The region location where your Bedrock model is active."
-                          control={
-                            <input
-                              type="text"
-                              value={store.awsRegion}
-                              onChange={(e) => store.setAwsRegion(e.target.value)}
-                              placeholder="us-east-1"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                      </>
-                    )}
 
-                    {/* Conditional Azure OpenAI configuration fields */}
-                    {store.provider === 'Azure OpenAI' && (
-                      <>
-                        <SettingsRow
-                          label="Azure Endpoint URL"
-                          description="The Endpoint URL location of your Azure OpenAI resource group."
-                          control={
-                            <input
-                              type="text"
-                              value={store.azureEndpoint}
-                              onChange={(e) => store.setAzureEndpoint(e.target.value)}
-                              placeholder="https://your-resource.openai.azure.com/"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                        <SettingsRow
-                          label="Deployment Name"
-                          description="The custom deployment name tags of your Azure OpenAI model."
-                          control={
-                            <input
-                              type="text"
-                              value={store.azureDeploymentName}
-                              onChange={(e) => store.setAzureDeploymentName(e.target.value)}
-                              placeholder="gpt-4o-deployment"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                        <SettingsRow
-                          label="API Version"
-                          description="The API query version parameter for Azure endpoints requests."
-                          control={
-                            <input
-                              type="text"
-                              value={store.azureApiVersion}
-                              onChange={(e) => store.setAzureApiVersion(e.target.value)}
-                              placeholder="2024-02-15-preview"
-                              className="mg-input font-mono" style={{ minWidth: '240px' }}
-                            />
-                          }
-                        />
-                      </>
-                    )}
-                  </SettingsCard>
+                      {/* STT Model Selection */}
+                      {(() => {
+                        const sttModels = DEFAULT_STT_MODELS[store.sttProvider] || ['default'];
+                        const selectedSttModel = sttModels.includes(store.sttModel)
+                          ? store.sttModel
+                          : sttModels[0];
 
-                  {/* Test Connection panel */}
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 bg-zinc-50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-900 rounded-xl mt-4">
-                    <div className="space-y-0.5 select-none flex-1 min-w-0">
-                      <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Validate Setup Connection</h4>
-                      <p className="text-[11px] text-zinc-500 leading-normal">
-                        Test connection status with {store.provider} to verify if your credential configuration works.
-                      </p>
-                      {testState === 'failed' && testErrorMessage && (
-                        <p className="text-[10px] text-sky-400 dark:text-sky-300 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
-                          <X className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Error: {testErrorMessage}
+                        return (
+                          <DropdownRow
+                            label="STT Model"
+                            description="Select the speech model variant for transcription."
+                            value={selectedSttModel}
+                            onChange={store.setSttModel}
+                            options={sttModels.map((m) => ({
+                              value: m,
+                              label: m,
+                            }))}
+                          />
+                        );
+                      })()}
+
+                      {/* STT API Key */}
+                      <ApiKeyInput provider={store.sttProvider} />
+                    </SettingsCard>
+
+                    {/* Test STT Connection panel */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 bg-zinc-50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-900 rounded-xl mt-4">
+                      <div className="space-y-0.5 select-none flex-1 min-w-0">
+                        <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                          <Mic className="w-3.5 h-3.5 text-cyan-500" /> Validate STT Connection
+                        </h4>
+                        <p className="text-[11px] text-zinc-500 leading-normal">
+                          Test credentials and audio transcription readiness with {store.sttProvider}.
                         </p>
+                        {sttTestState === 'failed' && sttTestErrorMessage && (
+                          <p className="text-[10px] text-rose-500 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                            <X className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Error: {sttTestErrorMessage}
+                          </p>
+                        )}
+                        {sttTestState === 'success' && sttTestCapabilityMessage && (
+                          <p className="text-[10px] text-emerald-500 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                            <span className="mt-0.5 shrink-0">ⓘ</span> {sttTestCapabilityMessage}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        {sttTestState === 'testing' && (
+                          <span className="text-xs text-zinc-500 flex items-center gap-1.5 font-semibold">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying STT...
+                          </span>
+                        )}
+                        {sttTestState === 'success' && (
+                          <span className="text-xs text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 font-bold">
+                            <Check className="w-4 h-4" /> STT Ready
+                          </span>
+                        )}
+                        {sttTestState === 'failed' && (
+                          <span className="text-xs text-rose-500 flex items-center gap-1.5 font-bold">
+                            <X className="w-4 h-4" /> STT Failed
+                          </span>
+                        )}
+
+                        <ActionButton
+                          variant="secondary"
+                          onClick={handleTestSTTConnection}
+                          disabled={sttTestState === 'testing'}
+                        >
+                          Test STT
+                        </ActionButton>
+                      </div>
+                    </div>
+                  </SettingsSection>
+
+                  {/* ── Section 2: AI / LLM Provider ── */}
+                  <SettingsSection
+                    title="2. AI Summarization & Chat (LLM) Engine"
+                    description="Generates rich meeting notes, executive summaries, action items, scorecards, and powers chat."
+                  >
+                    <SettingsCard>
+                      <ProviderQuickSelect
+                        value={store.provider}
+                        onChange={store.setProvider}
+                        providers={ProviderManager.getAIProviders()}
+                      />
+
+
+                      {/* Model Selection */}
+                      {(() => {
+                        const validCachedModels = store.availableModels.filter(
+                          (m) => store.provider !== 'Groq' || (!m.includes('qwen') && !m.includes('gpt-'))
+                        );
+                        const activeModels = validCachedModels.length > 0
+                          ? validCachedModels
+                          : (DEFAULT_PROVIDER_MODELS[store.provider] || ['claude-3-5-sonnet-latest', 'gpt-4o', 'llama-3.3-70b-versatile']);
+                        
+                        const selectedModel = activeModels.includes(store.model)
+                          ? store.model
+                          : activeModels[0];
+
+                        return (
+                          <DropdownRow
+                            label="Default Model"
+                            description="Select the default model for summarization, action items, and scorecards."
+                            value={selectedModel}
+                            onChange={store.setModel}
+                            options={activeModels.map((m) => ({
+                              value: m,
+                              label: m,
+                            }))}
+                            disabled={false}
+                          />
+                        );
+                      })()}
+
+                      {/* Shared Key Notice */}
+                      {isSharedKey && (
+                        <div
+                          className="px-4 py-2.5 rounded-lg text-xs flex items-center gap-2 border"
+                          style={{
+                            background: 'var(--accent-subtle)',
+                            borderColor: 'var(--accent-border)',
+                            color: 'var(--text-primary)',
+                          }}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                          <span>
+                            <strong>Shared API Key:</strong> Both STT and AI are set to <strong>{store.provider}</strong>. Your API key is automatically shared between both services.
+                          </span>
+                        </div>
                       )}
-                      {testState === 'success' && testCapabilityMessage && (
-                        <p className="text-[10px] text-amber-500 dark:text-amber-400 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
-                          <span className="mt-0.5 shrink-0">ⓘ</span> {testCapabilityMessage}
+
+                      {/* AI API Key Input */}
+                      {(store.provider === 'OpenAI' ||
+                        store.provider === 'Azure OpenAI' ||
+                        store.provider === 'Anthropic' ||
+                        store.provider === 'Gemini' ||
+                        store.provider === 'Groq' ||
+                        store.provider === 'OpenRouter' ||
+                        store.provider === 'Custom OpenAI-Compatible') && (
+                        <ApiKeyInput provider={store.provider} />
+                      )}
+
+                      {/* Conditional Base URL Input */}
+                      {(store.provider === 'OpenRouter' ||
+                        store.provider === 'Ollama' ||
+                        store.provider === 'Custom OpenAI-Compatible') && (
+                        <SettingsRow
+                          label="Base URL"
+                          description={`The custom URL endpoint location for ${store.provider} API requests.`}
+                          control={
+                            <input
+                              type="text"
+                              value={store.baseUrls[store.provider] || ''}
+                              onChange={(e) => store.setBaseUrlForProvider(store.provider, e.target.value)}
+                              className="mg-input font-mono" style={{ minWidth: '240px' }}
+                            />
+                          }
+                        />
+                      )}
+
+                      {/* Conditional AWS Bedrock configuration fields */}
+                      {store.provider === 'AWS Bedrock' && (
+                        <>
+                          <SettingsRow
+                            label="AWS Access Key ID"
+                            description="Your AWS Access Key Identifier credentials."
+                            control={
+                              <input
+                                type="text"
+                                value={store.awsAccessKeyId}
+                                onChange={(e) => store.setAwsAccessKeyId(e.target.value)}
+                                placeholder="AKIAIOSFODNN7EXAMPLE"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                          <SettingsRow
+                            label="AWS Secret Access Key"
+                            description="Your AWS Secret Access Key credentials."
+                            control={
+                              <input
+                                type="password"
+                                value={store.awsSecretAccessKey}
+                                onChange={(e) => store.setAwsSecretAccessKey(e.target.value)}
+                                placeholder="••••••••••••••••••••••••••••••••••••••••"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                          <SettingsRow
+                            label="AWS Region"
+                            description="The region location where your Bedrock model is active."
+                            control={
+                              <input
+                                type="text"
+                                value={store.awsRegion}
+                                onChange={(e) => store.setAwsRegion(e.target.value)}
+                                placeholder="us-east-1"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                        </>
+                      )}
+
+                      {/* Conditional Azure OpenAI configuration fields */}
+                      {store.provider === 'Azure OpenAI' && (
+                        <>
+                          <SettingsRow
+                            label="Azure Endpoint URL"
+                            description="The Endpoint URL location of your Azure OpenAI resource group."
+                            control={
+                              <input
+                                type="text"
+                                value={store.azureEndpoint}
+                                onChange={(e) => store.setAzureEndpoint(e.target.value)}
+                                placeholder="https://your-resource.openai.azure.com/"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                          <SettingsRow
+                            label="Deployment Name"
+                            description="The custom deployment name tags of your Azure OpenAI model."
+                            control={
+                              <input
+                                type="text"
+                                value={store.azureDeploymentName}
+                                onChange={(e) => store.setAzureDeploymentName(e.target.value)}
+                                placeholder="gpt-4o-deployment"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                          <SettingsRow
+                            label="API Version"
+                            description="The API query version parameter for Azure endpoints requests."
+                            control={
+                              <input
+                                type="text"
+                                value={store.azureApiVersion}
+                                onChange={(e) => store.setAzureApiVersion(e.target.value)}
+                                placeholder="2024-02-15-preview"
+                                className="mg-input font-mono" style={{ minWidth: '240px' }}
+                              />
+                            }
+                          />
+                        </>
+                      )}
+                    </SettingsCard>
+
+                    {/* Test AI Connection panel */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 bg-zinc-50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-900 rounded-xl mt-4">
+                      <div className="space-y-0.5 select-none flex-1 min-w-0">
+                        <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-500" /> Validate AI / LLM Connection
+                        </h4>
+                        <p className="text-[11px] text-zinc-500 leading-normal">
+                          Test connection status with {store.provider} to verify note generation and chat capabilities.
                         </p>
-                      )}
-                    </div>
+                        {testState === 'failed' && testErrorMessage && (
+                          <p className="text-[10px] text-rose-500 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                            <X className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Error: {testErrorMessage}
+                          </p>
+                        )}
+                        {testState === 'success' && testCapabilityMessage && (
+                          <p className="text-[10px] text-emerald-500 mt-1.5 leading-normal flex items-start gap-1 font-semibold">
+                            <span className="mt-0.5 shrink-0">ⓘ</span> {testCapabilityMessage}
+                          </p>
+                        )}
+                      </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      {testState === 'testing' && (
-                        <span className="text-xs text-zinc-500 flex items-center gap-1.5 font-semibold">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Authenticating...
-                        </span>
-                      )}
-                      {testState === 'success' && (
-                        <span className="text-xs text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 font-bold">
-                          <Check className="w-4 h-4" /> Connection Succeeded!
-                        </span>
-                      )}
-                      {testState === 'failed' && (
-                        <span className="text-xs text-sky-400 dark:text-sky-300 flex items-center gap-1.5 font-bold">
-                          <X className="w-4 h-4" /> Connection Failed
-                        </span>
-                      )}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {testState === 'testing' && (
+                          <span className="text-xs text-zinc-500 flex items-center gap-1.5 font-semibold">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Authenticating...
+                          </span>
+                        )}
+                        {testState === 'success' && (
+                          <span className="text-xs text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 font-bold">
+                            <Check className="w-4 h-4" /> AI Ready
+                          </span>
+                        )}
+                        {testState === 'failed' && (
+                          <span className="text-xs text-rose-500 flex items-center gap-1.5 font-bold">
+                            <X className="w-4 h-4" /> AI Failed
+                          </span>
+                        )}
 
-                      <ActionButton
-                        variant="primary"
-                        onClick={handleTestConnection}
-                        disabled={testState === 'testing'}
-                      >
-                        Test Connection
-                      </ActionButton>
+                        <ActionButton
+                          variant="primary"
+                          onClick={handleTestConnection}
+                          disabled={testState === 'testing'}
+                        >
+                          Test AI
+                        </ActionButton>
+                      </div>
                     </div>
-                  </div>
-                </SettingsSection>
+                  </SettingsSection>
+                </div>
               );
 
             case 'appearance':
@@ -495,13 +606,15 @@ export const Settings = () => {
                     <ToggleRow
                       label="Meeting detection"
                       description="Notify when a meeting is detected so you can start recording. Shows both an in-app banner and a Windows notification."
-                      checked={store.meetingDetectionNotifications && !store.notificationsDisabled}
+                      checked={store.meetingDetectionNotifications}
+                      disabled={store.notificationsDisabled}
                       onChange={store.setMeetingDetectionNotifications}
                     />
                     <ToggleRow
                       label="Calendar reminders"
                       description="Notify when a scheduled meeting is about to start. Requires calendar integration, which is not yet available — this preference is saved for when it is."
-                      checked={store.calendarReminderNotifications && !store.notificationsDisabled}
+                      checked={store.calendarReminderNotifications}
+                      disabled={store.notificationsDisabled}
                       onChange={store.setCalendarReminderNotifications}
                     />
                   </SettingsCard>

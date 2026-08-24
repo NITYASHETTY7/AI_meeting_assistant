@@ -7,7 +7,14 @@ import keytar from 'keytar'
 import * as db from './db'
 
 const execAsync = promisify(exec)
-const isDev = process.env.NODE_ENV === 'development'
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+// Set official app name and Windows AppUserModelID matching package.json appId
+// so OS notifications display "Mirai Granola" instead of "electron" in Windows Action Center.
+app.name = 'Mirai Granola'
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.miraigranola.app')
+}
 
 /** Keychain service name — consistent across all platforms */
 const KEYTAR_SERVICE = 'mirai-granola'
@@ -17,26 +24,42 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 
-function getAppIcon(sizePx = 64): Electron.NativeImage | undefined {
+function getAppIconPath(): string | undefined {
+  const possiblePaths = [
+    join(process.resourcesPath, 'app-icon-256.png'),
+    join(process.resourcesPath, 'tray-icon.png'),
+    join(app.getAppPath(), 'public', 'app-icon-256.png'),
+    join(app.getAppPath(), 'dist', 'app-icon-256.png'),
+    join(app.getAppPath(), 'public', 'tray-icon.png'),
+    join(process.cwd(), 'public', 'app-icon-256.png'),
+    join(process.cwd(), 'public', 'tray-icon.png'),
+    join(import.meta.dirname, '..', 'public', 'app-icon-256.png'),
+    join(import.meta.dirname, '..', 'dist', 'app-icon-256.png'),
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
+function getAppIcon(sizePx?: number): Electron.NativeImage | undefined {
   try {
-    // In dev, the icon lives under the project's public/ folder. In a
-    // packaged build it's bundled via electron-builder's "extraResources"
-    // (see package.json) directly under process.resourcesPath — public/
-    // itself isn't included in the packaged app.asar since Vite doesn't
-    // copy it verbatim into dist/.
-    const pngPath = isDev
-      ? join(process.cwd(), 'public/tray-icon.png')
-      : join(process.resourcesPath, 'tray-icon.png')
-    if (fs.existsSync(pngPath)) {
-      const img = nativeImage.createFromPath(pngPath)
+    const p = getAppIconPath();
+    if (p) {
+      const img = nativeImage.createFromPath(p);
       if (!img.isEmpty()) {
-        return sizePx ? img.resize({ width: sizePx, height: sizePx }) : img
+        return sizePx ? img.resize({ width: sizePx, height: sizePx }) : img;
       }
     }
   } catch (err) {
-    console.warn('[main] Failed to load icon:', err)
+    console.warn('[main] Failed to load icon:', err);
   }
-  return undefined
+  return undefined;
 }
 
 async function createTray() {
@@ -87,22 +110,17 @@ async function createTray() {
 }
 
 function createWindow() {
-  const appIcon = getAppIcon(64)
+  const iconPath = getAppIconPath()
+  const appIcon = getAppIcon(256)
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Mirai Granola',
-    icon: appIcon,
+    icon: iconPath || appIcon,
     webPreferences: {
       preload: join(import.meta.dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      // Meeting detection (MeetingDetectionService) polls every 5s via a
-      // renderer-side setInterval, and recording/transcription timers also
-      // live in the renderer. Electron throttles/suspends renderer timers by
-      // default once the window is hidden (close-to-tray keeps it hidden but
-      // alive) — without this flag, background detection and notifications
-      // silently stop firing as soon as the window is closed to tray.
       backgroundThrottling: false,
     }
   })
@@ -484,9 +502,14 @@ app.whenReady().then(() => {
       return { ok: false, error: 'Notifications are not supported on this system.' }
     }
     try {
+      const displayTitle = options.title.toLowerCase().includes('mirai')
+        ? options.title
+        : `Mirai Granola — ${options.title}`;
+
       const notification = new Notification({
-        title: options.title,
+        title: displayTitle,
         body: options.body,
+        icon: getAppIcon(128),
         silent: false,
       })
       notification.on('click', () => {

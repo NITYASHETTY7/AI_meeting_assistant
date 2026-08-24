@@ -220,12 +220,9 @@ export class LiveTranscriptionEngine {
     const rms = Math.sqrt(sum / chunk.length);
 
     // Speech onset requires clearing BOTH the fixed floor and a clear margin
-    // above the rolling noise floor. While already speaking, a slightly
-    // lower bar (no margin) is used so a real sentence's natural volume dips
-    // don't get chopped into fragments — only the onset decision needs to be
-    // strict, since the noise floor is exactly what we're trying to reject
-    // at the point where a false trigger would start a whole clip.
-    const onsetThreshold = Math.max(SPEECH_THRESHOLD, track.noiseFloor * NOISE_FLOOR_MARGIN);
+    // above the rolling noise floor. The threshold is clamped so high ambient noise
+    // never locks out normal conversational speech in long meetings.
+    const onsetThreshold = Math.min(0.025, Math.max(SPEECH_THRESHOLD, track.noiseFloor * NOISE_FLOOR_MARGIN));
     const hasVoice = track.isSpeaking ? rms >= SPEECH_THRESHOLD : rms >= onsetThreshold;
 
     if (hasVoice) {
@@ -267,14 +264,10 @@ export class LiveTranscriptionEngine {
           }
         }
       } else {
-        // Idle: this chunk is genuinely ambient noise (below the fixed
-        // floor already, or it would have triggered onset above) — use it
-        // to slowly calibrate the rolling noise floor to the room's actual
-        // level. Exponential moving average smooths out one-off spikes
-        // (a door closing, a single cough) so they don't permanently raise
-        // the floor and make the detector deaf to real speech afterward.
+        // Idle: slowly track rolling noise floor, clamped so it never exceeds normal speech RMS
         const NOISE_FLOOR_EMA_ALPHA = 0.05;
-        track.noiseFloor = track.noiseFloor + NOISE_FLOOR_EMA_ALPHA * (rms - track.noiseFloor);
+        const targetNoiseFloor = Math.min(0.012, rms);
+        track.noiseFloor = track.noiseFloor + NOISE_FLOOR_EMA_ALPHA * (targetNoiseFloor - track.noiseFloor);
 
         // Idle: update rolling pre-roll buffer
         track.preRollBuffer.push(chunk);
@@ -430,10 +423,7 @@ export class LiveTranscriptionEngine {
     // ...AND at least one chunk that clearly peaks above the room's actual
     // noise floor. Sustained background noise (fan, HVAC, hum) can drift
     // above the fixed SPEECH_THRESHOLD constant for a stretch without ever
-    // producing a real, sharp speech-like peak — this rejects that clip
-    // before it ever reaches Whisper, rather than relying on Whisper to
-    // recognize silence/noise on its own (it rarely does).
-    return peakRms >= noiseFloor * NOISE_FLOOR_MARGIN;
+    return peakRms >= Math.min(0.022, noiseFloor * NOISE_FLOOR_MARGIN);
   }
 
   private looksLikeHallucination(text: string, speakerLabel: string, clipDurationSec?: number): boolean {

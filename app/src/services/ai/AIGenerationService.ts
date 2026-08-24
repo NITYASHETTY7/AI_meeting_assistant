@@ -147,23 +147,22 @@ export async function runAIGeneration(meetingId: string): Promise<boolean> {
       return true;
     }
 
-    // Run all extractions in parallel for speed. Promise.allSettled (not
-    // Promise.all) is deliberate: these are 5 independent calls to the same
-    // provider, and their combined token usage can exceed a shared
-    // tokens-per-minute limit even after each individual call retries its
-    // own rate limit internally (see BaseOpenAICompatibleProvider). If just
-    // one of the five still ultimately fails, the other four should still be
-    // saved rather than discarding a fully successful summary because action
-    // items alone hit a rate limit.
-    const results = await Promise.allSettled([
+    // Stage 1: Generate primary summary and title first. This ensures the core
+    // document succeeds before secondary extractions and stays well within
+    // tokens-per-minute (TPM) limits on providers like Groq.
+    const [summaryResult, titleResult] = await Promise.allSettled([
       activeProvider.generateSummary(combinedTranscriptText),
       activeProvider.generateMeetingTitle(combinedTranscriptText),
+    ]);
+
+    // Stage 2: Generate secondary extractions (action items, decisions, follow-ups)
+    const [actionItemsResult, decisionsResult, followUpsResult] = await Promise.allSettled([
       activeProvider.extractActionItems(combinedTranscriptText),
       activeProvider.extractDecisions(combinedTranscriptText),
       activeProvider.extractFollowUps(combinedTranscriptText),
     ]);
 
-    const [summaryResult, titleResult, actionItemsResult, decisionsResult, followUpsResult] = results;
+    const results = [summaryResult, titleResult, actionItemsResult, decisionsResult, followUpsResult];
 
     const failures = results
       .map((r, i) => (r.status === 'rejected' ? { field: ['summary', 'title', 'action items', 'decisions', 'follow-ups'][i], reason: r.reason } : null))
@@ -188,9 +187,22 @@ export async function runAIGeneration(meetingId: string): Promise<boolean> {
 
     const summary = stripMarkdownSyntax(summaryResult.value);
     const title = titleResult.status === 'fulfilled' ? stripMarkdownSyntax(titleResult.value) : '';
-    const actionItems = (actionItemsResult.status === 'fulfilled' ? actionItemsResult.value : []).map(stripMarkdownSyntax);
+    let actionItems = (actionItemsResult.status === 'fulfilled' ? actionItemsResult.value : []).map(stripMarkdownSyntax);
     const decisions = (decisionsResult.status === 'fulfilled' ? decisionsResult.value : []).map(stripMarkdownSyntax);
     const followUps = (followUpsResult.status === 'fulfilled' ? followUpsResult.value : []).map(stripMarkdownSyntax);
+
+    // If no action items were returned directly (e.g. call failed or provider found no explicit tasks),
+    // extract actionable commitments from the generated summary so the Action Items panel is always populated.
+    if (actionItems.length === 0 && summary) {
+      const candidateLines = summary
+        .split(/(?<=[.!?])\s+|\n+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 10 && /agreed|commit|share|train|document|monitor|review|schedule|follow|plan|will|should|need to/i.test(s))
+        .map((s) => s.replace(/^[-*•\s]+/, '').replace(/^Overall outcome:?\s*/i, ''));
+      if (candidateLines.length > 0) {
+        actionItems = candidateLines.slice(0, 4);
+      }
+    }
 
     // Legacy aiNotes field (plain text, no markdown symbols — this content is
     // also used verbatim in email shares, so it must render correctly as

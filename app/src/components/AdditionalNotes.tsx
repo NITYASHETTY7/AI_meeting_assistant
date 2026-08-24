@@ -229,130 +229,17 @@ export const AdditionalNotes = ({ meeting }: AdditionalNotesProps) => {
    * marker visually absorbed into the second. Building one list up front
    * from the correct line range avoids that entirely.
    */
+  /**
+   * Toggles bullet or numbered list on the selected text / line using
+   * native contentEditable execCommand.
+   */
   const toggleList = (ordered: boolean) => {
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();
-    normalizeLines(editor);
 
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-    const range = selection.getRangeAt(0);
-
-    const getTopLevelNode = (node: Node): Node => {
-      let current: Node = node;
-      while (current.parentNode && current.parentNode !== editor) {
-        current = current.parentNode;
-      }
-      return current;
-    };
-
-    const startTop = getTopLevelNode(range.startContainer);
-    const endTop = getTopLevelNode(range.endContainer);
-
-    // Collapsed caret (nothing highlighted) sitting inside one <li> of an
-    // existing list — unwrap just that single item back to a plain line,
-    // not the whole list it belongs to. Checked separately from the
-    // multi-line whole-selection toggle-off below, since a collapsed caret
-    // inside a multi-item list would otherwise resolve to that list's
-    // entire top-level element as its "span" and incorrectly unwrap every
-    // item instead of just the one the user clicked into.
-    if (selection.isCollapsed) {
-      const existingLi = range.startContainer.nodeType === Node.ELEMENT_NODE
-        ? (range.startContainer as Element).closest('li')
-        : range.startContainer.parentElement?.closest('li');
-      if (existingLi && editor.contains(existingLi)) {
-        const list = existingLi.parentElement;
-        const div = document.createElement('div');
-        div.innerHTML = existingLi.innerHTML || '<br>';
-        list?.parentNode?.insertBefore(div, list);
-        existingLi.remove();
-        if (list && list.children.length === 0) list.remove();
-        handleInput();
-        refreshActiveFormats();
-        return;
-      }
-    }
-
-    const children: Node[] = Array.from(editor.childNodes);
-    const startIdx = children.indexOf(startTop);
-    const endIdx = children.indexOf(endTop);
-    if (startIdx === -1 || endIdx === -1) return;
-    const loIdx = Math.min(startIdx, endIdx);
-    const hiIdx = Math.max(startIdx, endIdx);
-    const spannedLines = children.slice(loIdx, hiIdx + 1);
-    const listTag = ordered ? 'ol' : 'ul';
-    const wantedTag = listTag.toUpperCase();
-
-    // Toggle off: the selection spans exactly one list element already of
-    // the requested type (bullet vs numbered) — unwrap every one of its
-    // <li>s back to plain lines. Checked across the whole selection (not
-    // just the first line) so a multi-line selection converts or reverts
-    // as one unit, never a mix of the two.
-    if (
-      spannedLines.length === 1 &&
-      spannedLines[0].nodeType === Node.ELEMENT_NODE &&
-      (spannedLines[0] as Element).tagName === wantedTag
-    ) {
-      const listEl = spannedLines[0] as Element;
-      const fragment = document.createDocumentFragment();
-      Array.from(listEl.children).forEach((li) => {
-        const div = document.createElement('div');
-        div.innerHTML = li.innerHTML || '<br>';
-        fragment.appendChild(div);
-      });
-      const anchor = children[loIdx];
-      editor.insertBefore(fragment, anchor);
-      listEl.remove();
-      handleInput();
-      refreshActiveFormats();
-      return;
-    }
-
-    // Build one shared list from every spanned line, in order. A spanned
-    // "line" that is itself an existing UL/OL (of the OTHER list type, or
-    // a multi-item list) contributes each of its own <li>s directly,
-    // rather than nesting a whole list inside a single new <li> — this
-    // is what lets converting a numbered list to a bullet list (or vice
-    // versa) restyle it cleanly instead of producing a list-inside-a-list.
-    const newList = document.createElement(listTag);
-    let hasContent = false;
-
-    for (const node of spannedLines) {
-      if (node.nodeType === Node.ELEMENT_NODE && ['UL', 'OL'].includes((node as Element).tagName)) {
-        Array.from((node as Element).children).forEach((existingLi) => {
-          const li = document.createElement('li');
-          li.innerHTML = existingLi.innerHTML || '<br>';
-          newList.appendChild(li);
-          hasContent = true;
-        });
-        continue;
-      }
-      const li = document.createElement('li');
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        li.innerHTML = (node as Element).innerHTML || '<br>';
-      } else {
-        li.appendChild(node.cloneNode(true));
-      }
-      newList.appendChild(li);
-      hasContent = true;
-    }
-
-    if (!hasContent) return;
-
-    const anchor = children[loIdx];
-    editor.insertBefore(newList, anchor);
-    spannedLines.forEach((n) => n.parentNode?.removeChild(n));
-
-    // Place the caret at the end of the last converted item.
-    const lastLi = newList.lastElementChild;
-    if (lastLi) {
-      const newRange = document.createRange();
-      newRange.selectNodeContents(lastLi);
-      newRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    }
+    const command = ordered ? 'insertOrderedList' : 'insertUnorderedList';
+    document.execCommand(command, false);
 
     handleInput();
     refreshActiveFormats();

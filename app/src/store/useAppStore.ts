@@ -252,6 +252,8 @@ interface AppState {
   restoreMeeting: (id: string) => void;
   /** Permanently erases a meeting and all its data (transcript, notes, chat). Cannot be undone. */
   permanentlyDeleteMeeting: (id: string) => void;
+  /** Permanently erases all meetings currently in the Bin. */
+  emptyBin: () => void;
   
   // Action Item CRUD
   addActionItem: (meetingId: string, text: string) => void;
@@ -272,6 +274,16 @@ interface AppState {
   // Settings State variables
   provider: string;
   setProvider: (provider: string) => void;
+  aiProvider: string;
+  setAiProvider: (provider: string) => void;
+  sttProvider: string;
+  setSttProvider: (provider: string) => void;
+  sttModel: string;
+  setSttModel: (model: string) => void;
+  sttAvailableModels: string[];
+  setSttAvailableModels: (models: string[]) => void;
+  sttConnectionStatus: 'idle' | 'testing' | 'success' | 'failed';
+  setSttConnectionStatus: (status: 'idle' | 'testing' | 'success' | 'failed') => void;
   model: string;
   setModel: (model: string) => void;
   apiKeys: Record<string, string>;
@@ -553,11 +565,10 @@ function persistActionItems(meetingId: string, items: ActionItem[]) {
     .catch((err: unknown) => console.error('[persist] replace-action-items failed:', err));
 }
 export const DEFAULT_PROVIDER_MODELS: Record<string, string[]> = {
-  'Groq': [
-    'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
-    'deepseek-r1-distill-llama-70b',
-    'gemma2-9b-it',
+  'Anthropic': [
+    'claude-3-5-sonnet-latest',
+    'claude-3-5-haiku-latest',
+    'claude-3-opus-latest',
   ],
   'OpenAI': [
     'gpt-4o',
@@ -565,17 +576,49 @@ export const DEFAULT_PROVIDER_MODELS: Record<string, string[]> = {
     'gpt-4-turbo',
     'gpt-3.5-turbo',
   ],
-  'Anthropic': [
-    'claude-3-5-sonnet-latest',
-    'claude-3-5-haiku-latest',
-    'claude-3-opus-latest',
+  'Groq': [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'deepseek-r1-distill-llama-70b',
+    'gemma2-9b-it',
   ],
   'Gemini': [
     'gemini-2.0-flash',
     'gemini-1.5-pro',
     'gemini-1.5-flash',
   ],
-  'Deepgram': ['nova-2', 'nova-2-general', 'nova-2-meeting'],
+  'OpenRouter': [
+    'anthropic/claude-3.5-sonnet',
+    'openai/gpt-4o',
+    'meta-llama/llama-3.3-70b-instruct',
+  ],
+  'Ollama': [
+    'llama3.2',
+    'mistral',
+    'llama3.1',
+  ],
+  'AWS Bedrock': [
+    'anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'meta.llama3-70b-instruct-v1:0',
+  ],
+  'Azure OpenAI': [
+    'gpt-4o',
+    'gpt-4o-mini',
+  ],
+  'Custom OpenAI-Compatible': [
+    'default',
+  ],
+  'Deepgram': ['nova-3', 'nova-2'],
+  'AssemblyAI': ['best', 'nano', 'conformer-2'],
+};
+
+export const DEFAULT_STT_MODELS: Record<string, string[]> = {
+  'Deepgram': ['nova-3', 'nova-2', 'nova-2-general', 'nova-2-meeting'],
+  'Groq': ['whisper-large-v3', 'whisper-large-v3-turbo', 'distil-whisper-large-v3-en'],
+  'OpenAI': ['whisper-1'],
+  'AssemblyAI': ['best', 'nano', 'conformer-2'],
+  'Gemini': ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+  'Azure OpenAI': ['whisper'],
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -1378,6 +1421,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
     persistPermanentlyDeleteMeeting(id);
   },
+  emptyBin: () => {
+    const deleted = get().deletedMeetings;
+    set({ deletedMeetings: [] });
+    for (const meeting of deleted) {
+      persistPermanentlyDeleteMeeting(meeting.id);
+    }
+  },
   appendTranscriptLine: (meetingId, line) => {
     set((state) => ({
       meetings: state.meetings.map((meeting) => {
@@ -1505,6 +1555,25 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Settings State variables
   provider: 'Groq',
+  aiProvider: 'Groq',
+  setAiProvider: (aiProvider) => {
+    set((state) => {
+      const cached = (state.cachedModels[aiProvider] && state.cachedModels[aiProvider].length > 0)
+        ? state.cachedModels[aiProvider]
+        : (DEFAULT_PROVIDER_MODELS[aiProvider] || []);
+      const chosenModel = cached.includes(state.model) && !state.model.includes('qwen')
+        ? state.model
+        : (cached[0] || '');
+
+      return {
+        provider: aiProvider,
+        aiProvider,
+        availableModels: cached,
+        model: chosenModel,
+        connectionStatus: cached.length > 0 ? 'success' : 'idle'
+      };
+    });
+  },
   setProvider: (provider) => {
     set((state) => {
       const cached = (state.cachedModels[provider] && state.cachedModels[provider].length > 0)
@@ -1516,12 +1585,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       return {
         provider,
+        aiProvider: provider,
         availableModels: cached,
         model: chosenModel,
         connectionStatus: cached.length > 0 ? 'success' : 'idle'
       };
     });
   },
+  sttProvider: 'Groq',
+  setSttProvider: (sttProvider) => {
+    set((state) => {
+      const models = DEFAULT_STT_MODELS[sttProvider] || [];
+      const chosenModel = models.includes(state.sttModel) ? state.sttModel : (models[0] || '');
+      return {
+        sttProvider,
+        sttAvailableModels: models,
+        sttModel: chosenModel,
+        sttConnectionStatus: 'idle',
+      };
+    });
+  },
+  sttModel: 'whisper-large-v3',
+  setSttModel: (sttModel) => set({ sttModel }),
+  sttAvailableModels: DEFAULT_STT_MODELS['Groq'] || [],
+  setSttAvailableModels: (sttAvailableModels) => set({ sttAvailableModels }),
+  sttConnectionStatus: 'idle',
+  setSttConnectionStatus: (sttConnectionStatus) => set({ sttConnectionStatus }),
   model: 'llama-3.3-70b-versatile',
   setModel: (model) => set({ model }),
   apiKeys: {
@@ -1677,12 +1766,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
 
   // Notifications
-  notificationsDisabled: false,
-  setNotificationsDisabled: (notificationsDisabled) => set({ notificationsDisabled }),
-  meetingDetectionNotifications: true,
-  setMeetingDetectionNotifications: (meetingDetectionNotifications) => set({ meetingDetectionNotifications }),
-  calendarReminderNotifications: true,
-  setCalendarReminderNotifications: (calendarReminderNotifications) => set({ calendarReminderNotifications }),
+  notificationsDisabled: (() => {
+    try {
+      return localStorage.getItem('mg_notifications_disabled') === 'true';
+    } catch {
+      return false;
+    }
+  })(),
+  setNotificationsDisabled: (notificationsDisabled) => {
+    try {
+      localStorage.setItem('mg_notifications_disabled', String(notificationsDisabled));
+    } catch {}
+    set({ notificationsDisabled });
+  },
+  meetingDetectionNotifications: (() => {
+    try {
+      const v = localStorage.getItem('mg_meeting_detection_notifications');
+      return v === null ? true : v === 'true';
+    } catch {
+      return true;
+    }
+  })(),
+  setMeetingDetectionNotifications: (meetingDetectionNotifications) => {
+    try {
+      localStorage.setItem('mg_meeting_detection_notifications', String(meetingDetectionNotifications));
+    } catch {}
+    set({ meetingDetectionNotifications });
+  },
+  calendarReminderNotifications: (() => {
+    try {
+      const v = localStorage.getItem('mg_calendar_reminder_notifications');
+      return v === null ? true : v === 'true';
+    } catch {
+      return true;
+    }
+  })(),
+  setCalendarReminderNotifications: (calendarReminderNotifications) => {
+    try {
+      localStorage.setItem('mg_calendar_reminder_notifications', String(calendarReminderNotifications));
+    } catch {}
+    set({ calendarReminderNotifications });
+  },
 
   // Language
   interfaceLanguage: 'en',

@@ -3,7 +3,7 @@
   "productName": "Mirai Granola",
   "description": "AI-powered desktop meeting assistant.",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -64,6 +64,14 @@
       {
         "from": "public/tray-icon.png",
         "to": "tray-icon.png"
+      },
+      {
+        "from": "public/app-icon-256.png",
+        "to": "app-icon-256.png"
+      },
+      {
+        "from": "public/favicon.svg",
+        "to": "favicon.svg"
       }
     ],
     "win": {
@@ -74,6 +82,7 @@
         }
       ],
       "icon": "public/app-icon-256.png",
+      "executableName": "Mirai-Granola",
       "signAndEditExecutable": false
     },
     "forceCodeSigning": false,
@@ -81,7 +90,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   }
 }

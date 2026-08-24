@@ -7,7 +7,10 @@ export class AudioDeviceManager {
   static async getMicrophones(): Promise<AudioDevice[] | any[]> {
     try {
       // Prompt permissions if not already active to load device descriptors
-      await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+      const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+      if (tempStream) {
+        tempStream.getTracks().forEach((t) => t.stop());
+      }
       const devices = await navigator.mediaDevices.enumerateDevices();
       return devices
         .filter((d) => d.kind === 'audioinput')

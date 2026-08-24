@@ -160,7 +160,10 @@ export class AudioCapture {
     };
 
     this.micSource.connect(this.micProcessor);
-    this.micProcessor.connect(this.audioContext.destination);
+    const micMuteNode = this.audioContext.createGain();
+    micMuteNode.gain.value = 0;
+    this.micProcessor.connect(micMuteNode);
+    micMuteNode.connect(this.audioContext.destination);
 
     // 3. System Output Loopback capture → Speaker 2, unconditionally.
     await this.startSystemAudioCapture();
@@ -184,8 +187,7 @@ export class AudioCapture {
    * failure banner (per the critical-failure requirement) instead of
    * silently pretending two-source attribution is working when it isn't.
    */
-  private async startSystemAudioCapture(attempt: 1 | 2 = 1): Promise<void> {
-    const SYSTEM_AUDIO_SILENCE_CHECK_MS = 4000;
+  private async startSystemAudioCapture(): Promise<void> {
     const SYSTEM_AUDIO_MIN_RMS = 0.0005;
 
     try {
@@ -203,7 +205,8 @@ export class AudioCapture {
         stream.removeTrack(track);
       });
 
-      if (stream.getAudioTracks().length === 0) {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
         this.markSystemAudioUnavailable();
         return;
       }
@@ -212,33 +215,15 @@ export class AudioCapture {
       this.systemSource = this.audioContext.createMediaStreamSource(stream);
       this.systemProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
-      // Watchdog: verifies the stream actually carries real signal, not
-      // just that getDisplayMedia() resolved without error (Chromium can
-      // grant a track that carries no actual audio if the underlying
-      // Windows Graphics Capture session fails to start). This is a
-      // CAPTURE HEALTH check, not a speaker decision.
-      let systemAudioSeenSignal = false;
-      this.systemAudioCheckTimer = setTimeout(() => {
-        if (systemAudioSeenSignal) return;
+      // System audio track successfully acquired from OS/Electron
+      useAppStore.getState().setSystemAudioStatus('active');
+      useAppStore.getState().setSystemAudioCritical(false);
 
-        this.teardownSystemAudio();
-
-        if (attempt === 1) {
-          console.warn(
-            '[AudioCapture] System output loopback produced no signal in the first ' +
-            `${SYSTEM_AUDIO_SILENCE_CHECK_MS}ms — retrying once with a fresh capture session.`
-          );
-          void this.startSystemAudioCapture(2);
-          return;
-        }
-
-        console.warn(
-          '[AudioCapture] System output loopback produced no signal after retrying — ' +
-          'system audio capture is unavailable for this recording.'
-        );
+      // Watch for track termination
+      audioTracks[0].addEventListener('ended', () => {
+        console.warn('[AudioCapture] System audio loopback track ended.');
         this.markSystemAudioUnavailable();
-        this.scheduleSystemAudioRetry();
-      }, SYSTEM_AUDIO_SILENCE_CHECK_MS);
+      });
 
       this.systemProcessor.onaudioprocess = (e) => {
         if (this.isPaused) return;
@@ -246,9 +231,7 @@ export class AudioCapture {
         const inputBuffer = e.inputBuffer.getChannelData(0);
         const systemCopy = new Float32Array(inputBuffer);
 
-        // Calculate level for the debug panel regardless of whether this
-        // is the first-signal check, so the meter reflects real-time
-        // output level once capture is confirmed working.
+        // Calculate real-time level for the debug panel meter
         let sum = 0;
         for (let i = 0; i < systemCopy.length; i++) {
           sum += systemCopy[i] * systemCopy[i];
@@ -256,24 +239,18 @@ export class AudioCapture {
         const rms = Math.sqrt(sum / systemCopy.length);
         const levelPct = Math.min(100, Math.round(rms * 250));
 
-        if (!systemAudioSeenSignal) {
-          if (rms >= SYSTEM_AUDIO_MIN_RMS) {
-            systemAudioSeenSignal = true;
-            if (this.systemAudioCheckTimer) {
-              clearTimeout(this.systemAudioCheckTimer);
-              this.systemAudioCheckTimer = null;
-            }
-            useAppStore.getState().setSystemAudioStatus('active');
-            useAppStore.getState().setSystemAudioCritical(false);
-          }
-        }
         useAppStore.getState().setSystemOutputLevel(levelPct);
+
+        // If the system channel is silent (no remote participant speaking),
+        // skip pushing silent chunks to avoid STT hallucinations, but keep track active.
+        if (rms < SYSTEM_AUDIO_MIN_RMS) {
+          return;
+        }
 
         // Cache system audio in mix
         this.chunks.push(systemCopy);
 
-        // Deterministic: EVERY system-output chunk is Speaker 2. No
-        // correlation, no confidence scoring.
+        // Deterministic: EVERY active system-output chunk is Speaker 2 / Others
         const segment = this.attribution.attributeSystemChunk(systemCopy);
 
         if (this.onAudioChunk) {
@@ -282,7 +259,10 @@ export class AudioCapture {
       };
 
       this.systemSource.connect(this.systemProcessor);
-      this.systemProcessor.connect(this.audioContext.destination);
+      const sysMuteNode = this.audioContext.createGain();
+      sysMuteNode.gain.value = 0;
+      this.systemProcessor.connect(sysMuteNode);
+      sysMuteNode.connect(this.audioContext.destination);
     } catch (err) {
       console.warn('[AudioCapture] System output loopback capture unavailable:', err);
       this.markSystemAudioUnavailable();
@@ -300,15 +280,12 @@ export class AudioCapture {
     useAppStore.getState().setSystemAudioStatus('inactive');
     useAppStore.getState().setSystemOutputLevel(0);
     useAppStore.getState().setSystemAudioCritical(true);
+    this.teardownSystemAudio();
+    this.scheduleSystemAudioRetry();
   }
 
   /**
-   * Fully disconnects and stops the system-output loopback audio pipeline
-   * so it can never emit another chunk until a subsequent capture attempt
-   * succeeds. Called by the silence watchdog when the capture is confirmed
-   * dead — leaving a non-functional pipeline connected risks it
-   * occasionally passing the RMS floor with near-silent noise/hum and
-   * producing garbled transcriptions.
+   * Fully disconnects and stops the system-output loopback audio pipeline.
    */
   private teardownSystemAudio(): void {
     if (this.systemAudioCheckTimer) {
@@ -334,11 +311,7 @@ export class AudioCapture {
 
   /**
    * Schedules one more attempt to re-acquire system-audio capture later in
-   * the recording, after the initial attempt + retry have both failed.
-   * This is purely a capture-reliability mitigation (verifying the stream
-   * exists), not a speaker-attribution mechanism — if a later attempt
-   * succeeds, the debug panel and critical-failure banner update
-   * automatically via the same status setters used on first success.
+   * the recording, if system audio was unavailable.
    */
   private scheduleSystemAudioRetry(): void {
     const MAX_PERIODIC_RETRIES = 3;
@@ -353,7 +326,7 @@ export class AudioCapture {
         `[AudioCapture] Retrying system-audio capture in the background ` +
         `(attempt ${this.systemAudioRetryCount}/${MAX_PERIODIC_RETRIES})...`
       );
-      void this.startSystemAudioCapture(1);
+      void this.startSystemAudioCapture();
     }, RETRY_INTERVAL_MS);
   }
 

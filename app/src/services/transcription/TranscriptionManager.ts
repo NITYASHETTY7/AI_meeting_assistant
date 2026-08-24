@@ -46,7 +46,7 @@ import type { AttributedSegment } from '../audio/AudioSourceAttribution';
  * right after a successful connection test, instead of a generic "Connected"
  * that doesn't tell the user when to expect their transcript.
  */
-export const POST_RECORDING_ONLY_PROVIDERS = ['AssemblyAI', 'Deepgram', 'Gemini'];
+export const POST_RECORDING_ONLY_PROVIDERS = ['AssemblyAI', 'Gemini'];
 
 export class TranscriptionManager {
   private static startTime = 0;
@@ -65,30 +65,20 @@ export class TranscriptionManager {
    */
   static async start(meetingId: string): Promise<void> {
     const store = useAppStore.getState();
+    const sttProviderName = store.sttProvider || (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider) ? store.provider : 'Groq');
     this.isPaused = false;
     this.startTime = Date.now();
     this.sessionActive = true;
     this.activeMeetingId = meetingId;
     this.seenSegmentIds = new Set();
 
-    if (!store.capabilities.speech_to_text) {
-      // Provider doesn't support STT — show informational state, don't fail
-      store.setTranscriptionStatus('idle');
-      store.setStreamState('disconnected');
-      console.info(
-        `[TranscriptionManager] ${store.provider} does not support live transcription. ` +
-        'Recording continues without live transcript.'
-      );
-      return;
-    }
-
     // Post-recording-only providers: capabilities.speech_to_text = true but
     // live mode is batch-after-stop. Their startLiveTranscription() is a
     // no-op. We skip the engine startup and will upload the full WAV in stop().
-    if (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider)) {
+    if (POST_RECORDING_ONLY_PROVIDERS.includes(sttProviderName)) {
       store.setTranscriptionStatus('idle');
       store.setStreamState('disconnected');
-      console.info(`[TranscriptionManager] ${store.provider}: will transcribe after recording stops.`);
+      console.info(`[TranscriptionManager] ${sttProviderName}: will transcribe after recording stops.`);
       return;
     }
 
@@ -96,7 +86,7 @@ export class TranscriptionManager {
       store.setStreamState('connecting');
       store.setTranscriptionStatus('processing');
 
-      const provider = ProviderManager.getActiveProvider();
+      const provider = ProviderManager.getSTTProvider();
 
       await provider.startLiveTranscription({
         onTranscriptUpdate: (event: TranscriptEvent) => {
@@ -165,11 +155,11 @@ export class TranscriptionManager {
     if (!this.sessionActive || this.isPaused) return;
 
     const store = useAppStore.getState();
-    if (!store.capabilities.speech_to_text) return;
-    if (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider)) return; // post-recording only
+    const sttProviderName = store.sttProvider || (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider) ? store.provider : 'Groq');
+    if (POST_RECORDING_ONLY_PROVIDERS.includes(sttProviderName)) return; // post-recording only
 
     try {
-      const provider = ProviderManager.getActiveProvider();
+      const provider = ProviderManager.getSTTProvider();
       await provider.transcribeAudioChunk(chunk, speakerTrack, attribution);
     } catch {
       // Chunk errors are silently dropped — never propagate to the UI
@@ -188,7 +178,7 @@ export class TranscriptionManager {
    * Clean stop — flushes pending audio and closes the session.
    *
    * @param wavBlob  The complete recording as a WAV Blob.
-   *                 Required for AssemblyAI post-recording transcription.
+   *                 Required for AssemblyAI / Deepgram post-recording transcription.
    *                 Ignored by live-STT providers and no-op providers.
    */
   static async stop(wavBlob?: Blob): Promise<void> {
@@ -196,15 +186,16 @@ export class TranscriptionManager {
     this.isPaused = false;
 
     const store = useAppStore.getState();
+    const sttProviderName = store.sttProvider || (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider) ? store.provider : 'Groq');
     store.setStreamState('disconnected');
     store.setActiveSessionId(null);
 
-    const isPostRecordingOnly = POST_RECORDING_ONLY_PROVIDERS.includes(store.provider);
+    const isPostRecordingOnly = POST_RECORDING_ONLY_PROVIDERS.includes(sttProviderName);
 
-    if (store.capabilities.speech_to_text && !isPostRecordingOnly) {
+    if (!isPostRecordingOnly) {
       // Live STT providers: flush the engine's pending batch
       try {
-        const provider = ProviderManager.getActiveProvider();
+        const provider = ProviderManager.getSTTProvider();
         await provider.stopLiveTranscription();
         store.setTranscriptionStatus('idle');
       } catch (err) {
@@ -230,14 +221,15 @@ export class TranscriptionManager {
     this.isPaused = false;
 
     const store = useAppStore.getState();
+    const sttProviderName = store.sttProvider || (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider) ? store.provider : 'Groq');
     store.setStreamState('disconnected');
     store.setTranscriptionStatus('idle');
     store.setActiveSessionId(null);
     store.setTranscriptSegments([]);
 
-    if (store.capabilities.speech_to_text && store.provider !== 'AssemblyAI') {
+    if (sttProviderName !== 'AssemblyAI') {
       try {
-        const provider = ProviderManager.getActiveProvider();
+        const provider = ProviderManager.getSTTProvider();
         // Fire-and-forget — don't await on cancel
         provider.stopLiveTranscription().catch(() => {});
       } catch { /* ignore */ }
@@ -250,7 +242,7 @@ export class TranscriptionManager {
   // ── Post-recording transcription flow ───────────────────────────────────────
 
   /**
-   * Uploads the full WAV to the active provider, polls/awaits until the
+   * Uploads the full WAV to the active STT provider, polls/awaits until the
    * transcript is ready, then appends all returned words/utterances as
    * transcript lines to the meeting.
    *
@@ -266,7 +258,7 @@ export class TranscriptionManager {
   private static async runPostRecordingTranscription(wavBlob: Blob): Promise<void> {
     const store = useAppStore.getState();
     const meetingId = this.activeMeetingId ?? store.activeMeetingId;
-    const providerName = store.provider;
+    const providerName = store.sttProvider || (POST_RECORDING_ONLY_PROVIDERS.includes(store.provider) ? store.provider : 'Deepgram');
 
     if (!meetingId) {
       console.warn(`[TranscriptionManager] ${providerName}: no active meeting ID, skipping upload.`);
@@ -277,7 +269,7 @@ export class TranscriptionManager {
     store.setStreamState('connecting');
 
     try {
-      const provider = ProviderManager.getActiveProvider();
+      const provider = ProviderManager.getSTTProvider();
 
       // Use transcribeAudio which handles upload + polling internally
       const transcriptText = await provider.transcribeAudio(wavBlob);
