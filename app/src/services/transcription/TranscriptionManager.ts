@@ -1,6 +1,7 @@
 import { useAppStore } from '../../store/useAppStore';
 import { ProviderManager } from '../ai/ProviderManager';
 import type { TranscriptEvent, DiarizedUtterance, SpeakerTrack } from '../ai/AIProvider';
+import type { AttributedSegment } from '../audio/AudioSourceAttribution';
 
 /**
  * TranscriptionManager — the single owner of all transcription lifecycle.
@@ -117,6 +118,9 @@ export class TranscriptionManager {
             time: event.timestamp,
             speaker: event.speaker,
             text: event.text,
+            attributionSource: event.attributionSource,
+            attributionSpeaker: event.attributionSpeaker,
+            attributionConfidence: event.attributionConfidence,
           };
 
           // Also deduplicate by (text, timestamp) as a secondary guard
@@ -157,7 +161,7 @@ export class TranscriptionManager {
    * Called on every AudioCapture onaudioprocess event.
    * No-ops gracefully if not running or paused.
    */
-  static async feedChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack): Promise<void> {
+  static async feedChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack, attribution?: AttributedSegment): Promise<void> {
     if (!this.sessionActive || this.isPaused) return;
 
     const store = useAppStore.getState();
@@ -166,7 +170,7 @@ export class TranscriptionManager {
 
     try {
       const provider = ProviderManager.getActiveProvider();
-      await provider.transcribeAudioChunk(chunk, speakerTrack);
+      await provider.transcribeAudioChunk(chunk, speakerTrack, attribution);
     } catch {
       // Chunk errors are silently dropped — never propagate to the UI
     }

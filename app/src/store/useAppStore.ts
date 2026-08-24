@@ -4,6 +4,17 @@ export interface TranscriptLine {
   time: string;
   speaker: string;
   text: string;
+  /**
+   * Audio Source Attribution layer output for this line (see
+   * AudioSourceAttribution.ts) — deterministic, not inferred: microphone →
+   * "Speaker 1", system output → "Speaker 2". In-memory only for now —
+   * not yet persisted to the SQLite schema, so this does not survive an
+   * app restart. Live-session UI/debugging can still read it directly off
+   * transcriptSegments while the recording is active.
+   */
+  attributionSource?: 'microphone' | 'system';
+  attributionSpeaker?: 'Speaker 1' | 'Speaker 2';
+  attributionConfidence?: number;
 }
 
 export interface ActionItem {
@@ -337,17 +348,34 @@ interface AppState {
    */
   micDeviceWarning: string | null;
   setMicDeviceWarning: (message: string | null) => void;
+
+  // ── Audio source debug panel state ──────────────────────────────────────
+  // Per the deterministic two-source attribution architecture: microphone
+  // → Speaker 1, system output → Speaker 2, always. These fields exist so
+  // that BEFORE anyone questions the transcription/diarization output, it's
+  // possible to directly verify both audio streams actually exist and are
+  // producing signal — a debug panel reads these live during a recording.
+  /** 'active' once the mic stream is acquired and flowing; 'inactive' otherwise (muted, not started, or a device health issue). */
+  micAudioStatus: 'active' | 'inactive';
+  setMicAudioStatus: (status: 'active' | 'inactive') => void;
+  /** 'active' only once system-output loopback capture is CONFIRMED producing real signal (not just that getDisplayMedia resolved). */
+  systemAudioStatus: 'active' | 'inactive';
+  setSystemAudioStatus: (status: 'active' | 'inactive') => void;
+  /** Real-time microphone input level, 0-100, for the debug panel's level meter. */
+  micInputLevel: number;
+  setMicInputLevel: (level: number) => void;
+  /** Real-time system-output level, 0-100, for the debug panel's level meter. */
+  systemOutputLevel: number;
+  setSystemOutputLevel: (level: number) => void;
   /**
-   * Non-null when system/desktop audio loopback capture appears to be
-   * producing no real signal (e.g. Windows granted a window source instead
-   * of a screen source, or loopback isn't supported for the current
-   * output device) — surfaced so "the other participant's voice is
-   * showing up as 'You'" is diagnosable instead of a silent failure, since
-   * with no system-audio signal every utterance only ever arrives via the
-   * mic track.
+   * True when system/loopback audio capture is confirmed unavailable for
+   * the current recording. Drives a visible, non-dismissable-by-silence
+   * banner stating "System audio capture unavailable. Two-speaker
+   * attribution cannot be guaranteed." — the app must never pretend
+   * two-source attribution is working when it isn't.
    */
-  systemAudioWarning: string | null;
-  setSystemAudioWarning: (message: string | null) => void;
+  systemAudioCritical: boolean;
+  setSystemAudioCritical: (critical: boolean) => void;
   streamState: StreamState;
   setStreamState: (state: StreamState) => void;
   activeSessionId: string | null;
@@ -1354,8 +1382,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       meetings: state.meetings.map((meeting) => {
         if (meeting.id === meetingId) {
+          // Prefer the Audio Source Attribution layer's verdict over the
+          // raw track label when available — deterministic per
+          // AudioSourceAttribution.ts: microphone -> Speaker 1 (You),
+          // system output -> Speaker 2 (Other Participant). No inference.
           const rawSpeaker = line.speaker?.trim() || 'Speaker';
-          const speakerName = rawSpeaker === 'You' ? 'You' : (rawSpeaker === 'Speaker' ? 'Other Participant' : rawSpeaker);
+          const speakerName =
+            line.attributionSpeaker === 'Speaker 2' ? 'Other Participant' :
+            line.attributionSpeaker === 'Speaker 1' ? 'You' :
+            rawSpeaker === 'You' ? 'You' :
+            rawSpeaker === 'Speaker' ? 'Other Participant' :
+            rawSpeaker;
           const currentParticipants = meeting.participants && meeting.participants.length > 0 ? meeting.participants : ['You'];
           const nextParticipants = currentParticipants.includes(speakerName)
             ? currentParticipants
@@ -1588,8 +1625,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLastTranscriptionError: (lastTranscriptionError) => set({ lastTranscriptionError }),
   micDeviceWarning: null,
   setMicDeviceWarning: (micDeviceWarning) => set({ micDeviceWarning }),
-  systemAudioWarning: null,
-  setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
+  micAudioStatus: 'inactive',
+  setMicAudioStatus: (micAudioStatus) => set({ micAudioStatus }),
+  systemAudioStatus: 'inactive',
+  setSystemAudioStatus: (systemAudioStatus) => set({ systemAudioStatus }),
+  micInputLevel: 0,
+  setMicInputLevel: (micInputLevel) => set({ micInputLevel }),
+  systemOutputLevel: 0,
+  setSystemOutputLevel: (systemOutputLevel) => set({ systemOutputLevel }),
+  systemAudioCritical: false,
+  setSystemAudioCritical: (systemAudioCritical) => set({ systemAudioCritical }),
   streamState: 'disconnected',
   setStreamState: (streamState) => set({ streamState }),
   activeSessionId: null,

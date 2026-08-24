@@ -1,6 +1,15 @@
 allowBuilds:
   better-sqlite3: true
+  electron-winstaller: true
   esbuild: true
   keytar: true
 minimumReleaseAgeExclude:
   - '@rolldown/binding-android-arm64@1.2.2'
+# electron-builder's own dependency chain (app-builder-lib -> @electron/rebuild)
+# resolves @electron/node-gyp via a git-repository reference rather than a
+# published npm version. This is a known, legitimate part of
+# electron-builder's dependency tree (used to rebuild native modules like
+# better-sqlite3/keytar for the packaged app), not a third-party package
+# substitution — disabling pnpm's exotic-subdependency block for this
+# install only.
+blockExoticSubdeps: false

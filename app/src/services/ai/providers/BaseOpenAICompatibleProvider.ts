@@ -1,4 +1,5 @@
 import type { ProviderConfig, AuthenticationResult, LiveTranscriptionOptions, SpeakerTrack } from '../AIProvider';
+import type { AttributedSegment } from '../../audio/AudioSourceAttribution';
 import { useAppStore } from '../../../store/useAppStore';
 
 /**
@@ -379,7 +380,7 @@ export abstract class BaseOpenAICompatibleProvider {
     // No-op for providers without live transcription
   }
 
-  async transcribeAudioChunk(_chunk: Float32Array, _speakerTrack?: SpeakerTrack): Promise<void> {
+  async transcribeAudioChunk(_chunk: Float32Array, _speakerTrack?: SpeakerTrack, _attribution?: AttributedSegment): Promise<void> {
     // No-op for providers without live transcription.
     // Chunks are dropped silently so recording is not affected.
   }

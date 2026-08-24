@@ -50,7 +50,13 @@ export const MeetingCard = ({
   const distinct = new Set<string>(participants && participants.length > 0 ? participants : ['You']);
   if (meetingData?.transcript) {
     meetingData.transcript.forEach((t) => {
-      if (t.speaker) {
+      // Deterministic per AudioSourceAttribution.ts: microphone -> Speaker
+      // 1 (You), system output -> Speaker 2 (Other Participant).
+      if (t.attributionSpeaker === 'Speaker 2') {
+        distinct.add('Other Participant');
+      } else if (t.attributionSpeaker === 'Speaker 1') {
+        distinct.add('You');
+      } else if (t.speaker) {
         distinct.add(t.speaker === 'Speaker' ? 'Other Participant' : t.speaker);
       }
     });

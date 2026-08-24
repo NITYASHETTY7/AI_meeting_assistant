@@ -1,4 +1,5 @@
 import type { AuthenticationResult, LiveTranscriptionOptions, SpeakerTrack } from '../../AIProvider';
+import type { AttributedSegment } from '../../../audio/AudioSourceAttribution';
 import { BaseOpenAICompatibleProvider } from '../BaseOpenAICompatibleProvider';
 import { LiveTranscriptionEngine, type TranscribeResult } from '../../LiveTranscriptionEngine';
 import { useAppStore } from '../../../../store/useAppStore';
@@ -176,8 +177,8 @@ export class GroqProvider extends BaseOpenAICompatibleProvider {
     return this.liveEngine.stop();
   }
 
-  override async transcribeAudioChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack): Promise<void> {
-    return this.liveEngine.processChunk(chunk, speakerTrack);
+  override async transcribeAudioChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack, attribution?: AttributedSegment): Promise<void> {
+    return this.liveEngine.processChunk(chunk, speakerTrack, attribution);
   }
 
   // ── File transcription ────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import type { AttributedSegment, AudioSource, SpeakerIdentity } from '../audio/AudioSourceAttribution';
+
 export interface ProviderConfig {
   provider: string;
   apiKey?: string;
@@ -53,6 +55,21 @@ export interface TranscriptEvent {
   sequenceId: number;
   audioStartTime: number;
   audioEndTime: number;
+  /**
+   * Audio Source Attribution layer output (see AudioSourceAttribution.ts).
+   * Deterministic — `attributionSource` is whichever physical stream this
+   * utterance's chunks came from, and `attributionSpeaker` is the fixed
+   * mapping of that source (microphone → "Speaker 1", system → "Speaker
+   * 2"). No correlation or inference is involved. Optional because
+   * non-live/post-recording providers (AssemblyAI, Deepgram, Gemini)
+   * don't run chunks through this layer at all — they use their own
+   * native diarization on the full mixed recording instead.
+   * `attributionConfidence` is always 1 when present — kept only for
+   * interface stability, not because the mapping is ever uncertain.
+   */
+  attributionSource?: AudioSource;
+  attributionSpeaker?: SpeakerIdentity;
+  attributionConfidence?: number;
 }
 
 export interface LiveTranscriptionOptions {
@@ -93,7 +110,7 @@ export interface AIProvider {
   // Real-time Streaming APIs
   startLiveTranscription(options: LiveTranscriptionOptions): Promise<void>;
   stopLiveTranscription(): Promise<void>;
-  transcribeAudioChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack): Promise<void>;
+  transcribeAudioChunk(chunk: Float32Array, speakerTrack?: SpeakerTrack, attribution?: AttributedSegment): Promise<void>;
   transcribeAudioFile(audioFile: unknown): Promise<string>;
 
   /**

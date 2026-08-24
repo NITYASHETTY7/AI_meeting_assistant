@@ -358,7 +358,14 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
           </div>
         ) : (
           filteredLines.map((line, idx) => {
-            const isYou = line.speaker.toLowerCase() === 'you';
+            // Deterministic per AudioSourceAttribution.ts: microphone chunks
+            // are always "Speaker 1" (You), system-output chunks are always
+            // "Speaker 2" (Others). No correlation, no inference — the
+            // source a line's audio came from IS its speaker label.
+            const hasAttribution = line.attributionSpeaker !== undefined;
+            const isYou = hasAttribution
+              ? line.attributionSpeaker === 'Speaker 1'
+              : line.speaker.toLowerCase() === 'you';
             const lineTranslation = lineTranslations.get(line.originalIdx);
             const isPickerOpen = activeLangPickerIdx === line.originalIdx;
             const isThisLineTranslating = translatingIdx === line.originalIdx;
@@ -381,14 +388,12 @@ export const TranscriptPanel = ({ meeting }: TranscriptPanelProps) => {
                       : '1px solid var(--speaker-other-border)',
                   }}
                 >
-                  {/* Speaker & Timestamp header strip */}
-                  <div className="flex items-center justify-between gap-4 mb-1.5 select-none">
-                    <span
-                      className="text-[10px] font-bold tracking-wide"
-                      style={{ color: isYou ? 'var(--accent)' : 'var(--speaker-other)' }}
-                    >
-                      {isYou ? 'You' : (line.speaker && line.speaker !== 'Speaker' ? line.speaker : 'Others')}
-                    </span>
+                  {/* Timestamp header strip — speaker label intentionally
+                      removed: attribution can't reliably distinguish "You"
+                      from "Others" yet, so showing a label risks being
+                      confidently wrong. Blue (right) vs purple (left) still
+                      indicates which audio source the line came from. */}
+                  <div className="flex items-center justify-end gap-4 mb-1.5 select-none">
                     <span
                       className="font-mono text-[9px] px-1.5 py-0.5 rounded"
                       style={{

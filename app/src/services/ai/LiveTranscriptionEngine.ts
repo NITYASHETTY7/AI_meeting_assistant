@@ -1,4 +1,5 @@
 import type { LiveTranscriptionOptions, TranscriptEvent, SpeakerTrack } from './AIProvider';
+import type { AttributedSegment } from '../audio/AudioSourceAttribution';
 import { ProviderManager } from './ProviderManager';
 
 /**
@@ -85,6 +86,14 @@ interface TrackVADState {
   speakerLabel: SpeakerTrack;
   preRollBuffer: Float32Array[];
   speechBuffer: Float32Array[];
+  /**
+   * Attribution segments (source/speaker/confidence) aligned 1:1 with the
+   * chunks currently in speechBuffer, collected from the Audio Source
+   * Attribution layer (see AudioSourceAttribution.ts / AudioCapture.ts).
+   * Used at flush time to compute the utterance's dominant attribution
+   * rather than trusting only the raw track label.
+   */
+  attributionBuffer: AttributedSegment[];
   isSpeaking: boolean;
   speechChunksCount: number;
   silenceChunksCount: number;
@@ -117,6 +126,7 @@ export class LiveTranscriptionEngine {
     speakerLabel: 'You',
     preRollBuffer: [],
     speechBuffer: [],
+    attributionBuffer: [],
     isSpeaking: false,
     speechChunksCount: 0,
     silenceChunksCount: 0,
@@ -127,6 +137,7 @@ export class LiveTranscriptionEngine {
     speakerLabel: 'Speaker',
     preRollBuffer: [],
     speechBuffer: [],
+    attributionBuffer: [],
     isSpeaking: false,
     speechChunksCount: 0,
     silenceChunksCount: 0,
@@ -196,7 +207,7 @@ export class LiveTranscriptionEngine {
   /**
    * Process a PCM audio chunk through the VAD state machine for the given speaker track.
    */
-  async processChunk(chunk: Float32Array, speakerTrack: SpeakerTrack = 'You'): Promise<void> {
+  async processChunk(chunk: Float32Array, speakerTrack: SpeakerTrack = 'You', attribution?: AttributedSegment): Promise<void> {
     if (!this.isRunning) return;
 
     const track = speakerTrack === 'Speaker' ? this.systemTrack : this.micTrack;
@@ -222,10 +233,12 @@ export class LiveTranscriptionEngine {
         // Speech onset: include pre-roll chunks so the first consonant isn't clipped
         track.isSpeaking = true;
         track.speechBuffer = [...track.preRollBuffer, chunk];
+        track.attributionBuffer = attribution ? [attribution] : [];
         track.speechChunksCount = 1;
         track.silenceChunksCount = 0;
       } else {
         track.speechBuffer.push(chunk);
+        if (attribution) track.attributionBuffer.push(attribution);
         track.speechChunksCount++;
         track.silenceChunksCount = 0;
 
@@ -238,6 +251,7 @@ export class LiveTranscriptionEngine {
       if (track.isSpeaking) {
         track.silenceChunksCount++;
         track.speechBuffer.push(chunk); // keep natural trail
+        if (attribution) track.attributionBuffer.push(attribution);
 
         // Natural pause detected (e.g. ~650ms of silence after speaking)
         if (track.silenceChunksCount >= SILENCE_LIMIT_CHUNKS) {
@@ -246,6 +260,7 @@ export class LiveTranscriptionEngine {
           } else {
             // Below min speech length (e.g. short click or mic tap) — discard
             track.speechBuffer = [];
+            track.attributionBuffer = [];
             track.isSpeaking = false;
             track.speechChunksCount = 0;
             track.silenceChunksCount = 0;
@@ -275,6 +290,7 @@ export class LiveTranscriptionEngine {
   private resetTrack(track: TrackVADState): void {
     track.preRollBuffer = [];
     track.speechBuffer = [];
+    track.attributionBuffer = [];
     track.isSpeaking = false;
     track.speechChunksCount = 0;
     track.silenceChunksCount = 0;
@@ -290,6 +306,7 @@ export class LiveTranscriptionEngine {
     if (!this.options || track.speechBuffer.length === 0) return;
 
     const chunks = track.speechBuffer.splice(0);
+    const attributionSegments = track.attributionBuffer.splice(0);
     track.isSpeaking = false;
     track.speechChunksCount = 0;
     track.silenceChunksCount = 0;
@@ -299,6 +316,14 @@ export class LiveTranscriptionEngine {
     // Approximate real audio duration of this clip — used to sanity-check
     // whether the returned text is even plausible for how much audio was sent.
     const clipDurationSec = chunks.length * 0.093;
+
+    // Attribution is deterministic (source alone fixes the speaker — see
+    // AudioSourceAttribution.ts), so every chunk collected for this
+    // utterance necessarily has the identical source/speaker: a track's
+    // VAD state machine only ever buffers chunks from ONE physical stream
+    // per utterance. No aggregation/voting needed — just read whichever
+    // segment is present.
+    const utteranceAttribution = attributionSegments[0];
 
     try {
       const blob = this.encodePcmToWav(chunks, this.sampleRate);
@@ -350,6 +375,9 @@ export class LiveTranscriptionEngine {
         sequenceId: this.sequenceId++,
         audioStartTime: Math.max(0, totalSec - Math.floor(chunks.length * 0.093)),
         audioEndTime: totalSec,
+        attributionSource: utteranceAttribution?.source,
+        attributionSpeaker: utteranceAttribution?.speaker,
+        attributionConfidence: utteranceAttribution?.confidence,
       };
 
       this.options.onTranscriptUpdate(event);

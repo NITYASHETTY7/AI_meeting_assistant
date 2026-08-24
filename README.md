@@ -27,7 +27,6 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. Mirai Gra
 ## Directory structure
 
 - `app/` — the Electron + React + TypeScript application. All development happens here.
-- `docs/` — project documentation.
 
 ## Getting started
 

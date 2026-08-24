@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, dialog, shell, Tray, Menu, nativeImage, desktopCapturer } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog, shell, Tray, Menu, nativeImage, desktopCapturer, session } from 'electron'
 import { join } from 'path'
 import fs, { promises as fsPromises } from 'fs'
 import { exec } from 'child_process'
@@ -19,8 +19,14 @@ let isQuitting = false
 
 function getAppIcon(sizePx = 64): Electron.NativeImage | undefined {
   try {
-    const basePath = isDev ? process.cwd() : app.getAppPath()
-    const pngPath = join(basePath, 'public/tray-icon.png')
+    // In dev, the icon lives under the project's public/ folder. In a
+    // packaged build it's bundled via electron-builder's "extraResources"
+    // (see package.json) directly under process.resourcesPath — public/
+    // itself isn't included in the packaged app.asar since Vite doesn't
+    // copy it verbatim into dist/.
+    const pngPath = isDev
+      ? join(process.cwd(), 'public/tray-icon.png')
+      : join(process.resourcesPath, 'tray-icon.png')
     if (fs.existsSync(pngPath)) {
       const img = nativeImage.createFromPath(pngPath)
       if (!img.isEmpty()) {
@@ -184,13 +190,54 @@ async function getActiveWindowTitles(): Promise<string[]> {
 }
 
 app.whenReady().then(() => {
-  // Initialize Drizzle ORM over Better SQLite3 and run pending migrations
+  // Registers the modern, officially-documented display-media request
+  // handler for system audio loopback capture (see Electron's
+  // desktopCapturer docs). The renderer calls
+  // navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+  // instead of the older chromeMediaSource:'desktop' mandatory-constraints
+  // getUserMedia() call — that older API path is what was hitting the WGC
+  // "GetFrame failed" screen-capture-session timeout. This handler routes
+  // getDisplayMedia through the same desktopCapturer source list but lets
+  // Chromium negotiate the actual capture internally via its
+  // better-maintained getDisplayMedia code path, and explicitly requests
+  // audio: 'loopback' so Chromium knows this call only needs system audio.
+  // Must be registered before any getDisplayMedia() call from the
+  // renderer, so it's set up here at startup rather than per-recording.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      if (sources.length === 0) {
+        callback({})
+        return
+      }
+      callback({ video: sources[0], audio: 'loopback' })
+    }).catch((err) => {
+      console.error('[main] setDisplayMediaRequestHandler getSources failed:', err)
+      callback({})
+    })
+  })
+
+  // Initialize Drizzle ORM over Better SQLite3 and run pending migrations.
+  //
+  // IMPORTANT: app.getAppPath() (used for isDev===false previously) points
+  // at the packaged app's installation directory — e.g.
+  // "C:\Program Files\Mirai Granola\resources\app.asar" — which is
+  // READ-ONLY once installed. Writing the SQLite database, recordings, and
+  // app-config.json there would fail (or silently no-op) in a real
+  // installed build. All WRITABLE user data must live under
+  // app.getPath('userData') instead (the OS-appropriate per-user app data
+  // directory, e.g. %APPDATA%\Mirai Granola on Windows) — this is the
+  // standard, documented Electron pattern. Bundled READ-ONLY assets
+  // (migrations) are read from process.resourcesPath instead, matching the
+  // "extraResources" entry in package.json's electron-builder config.
   const appPath = isDev ? process.cwd() : app.getAppPath()
-  const dbDir = join(appPath, 'database')
+  const userDataPath = isDev ? process.cwd() : app.getPath('userData')
+  const dbDir = join(userDataPath, 'database')
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true })
   }
-  const migrationsFolder = join(appPath, 'database', 'migrations')
+  const migrationsFolder = isDev
+    ? join(appPath, 'database', 'migrations')
+    : join(process.resourcesPath, 'database', 'migrations')
   try {
     db.initDatabase(dbDir, migrationsFolder)
   } catch (err) {
@@ -199,7 +246,7 @@ app.whenReady().then(() => {
 
   // ── App config (persists settings that must be known before/independent
   // of the SQLite DB — e.g. the recordings folder location) ──────────────────
-  const configPath = join(appPath, 'app-config.json')
+  const configPath = join(userDataPath, 'app-config.json')
 
   function readAppConfig(): { recordingsDir?: string } {
     try {
@@ -215,7 +262,7 @@ app.whenReady().then(() => {
   }
 
   const appConfig = readAppConfig()
-  let recordingsDir = appConfig.recordingsDir || join(appPath, 'recordings')
+  let recordingsDir = appConfig.recordingsDir || join(userDataPath, 'recordings')
 
   // ── Audio save IPC ──────────────────────────────────────────────────────────
   ipcMain.handle('save-audio', async (_event, { fileName, buffer }) => {

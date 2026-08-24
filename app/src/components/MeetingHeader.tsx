@@ -279,7 +279,13 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
               const set = new Set<string>(meeting.participants && meeting.participants.length > 0 ? meeting.participants : ['You']);
               if (meeting.transcript) {
                 meeting.transcript.forEach((t) => {
-                  if (t.speaker) {
+                  // Deterministic per AudioSourceAttribution.ts: microphone
+                  // -> Speaker 1 (You), system output -> Speaker 2 (Other Participant).
+                  if (t.attributionSpeaker === 'Speaker 2') {
+                    set.add('Other Participant');
+                  } else if (t.attributionSpeaker === 'Speaker 1') {
+                    set.add('You');
+                  } else if (t.speaker) {
                     set.add(t.speaker === 'Speaker' ? 'Other Participant' : t.speaker);
                   }
                 });
@@ -316,19 +322,6 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
           </span>
         )}
 
-        {/* System/desktop audio loopback warning — when the other participant's
-            voice isn't being captured separately from the mic, so speaker
-            labels ("You" vs "Others") may be inaccurate for this recording. */}
-        {store.systemAudioWarning && (store.recordingStatus === 'recording' || store.recordingStatus === 'paused') && (
-          <span
-            title={store.systemAudioWarning}
-            className="cursor-default flex items-center gap-1 text-[10px] font-semibold"
-            style={{ color: 'var(--warning)' }}
-          >
-            <ShieldAlert className="w-3.5 h-3.5" />
-            Speaker audio issue
-          </span>
-        )}
 
         {/* Status dot + transcription badge (while active) */}
         {(store.recordingStatus === 'recording' || store.recordingStatus === 'paused') && (

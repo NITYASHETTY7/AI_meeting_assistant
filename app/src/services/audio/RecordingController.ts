@@ -2,6 +2,7 @@ import { AudioCapture } from './AudioCapture';
 import { WaveFileWriter } from './WaveFileWriter';
 import { useAppStore } from '../../store/useAppStore';
 import type { SpeakerTrack } from '../ai/AIProvider';
+import type { AttributedSegment } from './AudioSourceAttribution';
 import { TranscriptionManager } from '../transcription/TranscriptionManager';
 
 /**
@@ -81,9 +82,12 @@ export class RecordingController {
       this.capture = new AudioCapture(
         rate,
         this.onVolumeChange,
-        (chunk: Float32Array, speakerTrack?: SpeakerTrack) => {
-          // Feed raw audio chunk to TranscriptionManager with speaker track
-          TranscriptionManager.feedChunk(chunk, speakerTrack);
+        (chunk: Float32Array, speakerTrack?: SpeakerTrack, attribution?: AttributedSegment) => {
+          // Feed raw audio chunk to TranscriptionManager with both the
+          // legacy speaker track tag and the richer attribution segment
+          // (source/speaker/confidence) from the Audio Source Attribution
+          // layer — see AudioSourceAttribution.ts.
+          TranscriptionManager.feedChunk(chunk, speakerTrack, attribution);
         }
       );
 

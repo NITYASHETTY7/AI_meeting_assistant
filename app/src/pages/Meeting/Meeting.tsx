@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ListTodo, MessageSquare, Sparkles, Plus, Bot, AlertCircle } from 'lucide-react';
 import { ContentLayout } from '../../components/ContentLayout';
 import { MeetingHeader } from '../../components/MeetingHeader';
+import { SystemAudioCriticalBanner } from '../../components/SystemAudioCriticalBanner';
+import { AudioSourceDebugPanel } from '../../components/AudioSourceDebugPanel';
 import { TranscriptPanel } from '../../components/TranscriptPanel';
 import { AdditionalNotes } from '../../components/AdditionalNotes';
 import { SummaryPanel } from '../../components/SummaryPanel';
@@ -219,6 +221,8 @@ export const Meeting = () => {
         <div className="flex flex-col gap-4 pb-6">
           {/* Header with recording controls built-in */}
           <MeetingHeader meeting={activeMeeting} />
+          <SystemAudioCriticalBanner />
+          <AudioSourceDebugPanel />
           {renderTabBar()}
           <div className="h-[65vh] min-h-[420px]">
             <TranscriptPanel meeting={activeMeeting} />
@@ -246,6 +250,8 @@ export const Meeting = () => {
     >
       <div className="flex flex-col gap-4 pb-6">
         <MeetingHeader meeting={activeMeeting} />
+        <SystemAudioCriticalBanner />
+        <AudioSourceDebugPanel />
         
         {/* Template Selector & Toolbar matching Granola UI */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/60 dark:border-zinc-700/50">
