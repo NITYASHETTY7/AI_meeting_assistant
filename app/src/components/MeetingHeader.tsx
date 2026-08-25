@@ -542,7 +542,7 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
                     </p>
                   </div>
                   <button
-                    onClick={() => { setShowMicPopover(false); navigate('/settings'); }}
+                    onClick={() => { setShowMicPopover(false); navigate('/settings?tab=recording'); }}
                     className="text-[10px] font-semibold cursor-pointer hover:underline"
                     style={{ color: 'var(--accent)' }}
                   >
@@ -557,7 +557,7 @@ export const MeetingHeader = ({ meeting }: MeetingHeaderProps) => {
                     <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{store.sampleRate} Hz</p>
                   </div>
                   <button
-                    onClick={() => { setShowMicPopover(false); navigate('/settings'); }}
+                    onClick={() => { setShowMicPopover(false); navigate('/settings?tab=recording'); }}
                     className="text-[10px] font-semibold cursor-pointer hover:underline"
                     style={{ color: 'var(--accent)' }}
                   >

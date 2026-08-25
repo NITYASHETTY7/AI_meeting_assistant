@@ -36,7 +36,8 @@ export type MeetingTemplateId =
   | 'recruitment_metrics' 
   | 'hr_strategy' 
   | 'performance_feedback' 
-  | 'team_recap';
+  | 'team_recap'
+  | (string & {});
 
 export interface ScorecardCriterion {
   id: string;
@@ -111,6 +112,20 @@ export interface TeamRecapInfo {
   highlights: TemplateInsightItem[];
 }
 
+export interface CustomTemplateInsightItem {
+  id: string;
+  category?: string;
+  title: string;
+  notes: string;
+}
+
+export interface CustomTemplateInfo {
+  templateId: string;
+  templateName: string;
+  summary: string;
+  items: CustomTemplateInsightItem[];
+}
+
 export interface Meeting {
   id: string;
   title: string;
@@ -140,6 +155,7 @@ export interface Meeting {
   hrStrategyInfo?: HrStrategyInfo;
   performanceFeedbackInfo?: PerformanceFeedbackInfo;
   teamRecapInfo?: TeamRecapInfo;
+  customTemplateInfo?: CustomTemplateInfo;
   /** Unix ms timestamp of when this meeting was moved to the Bin. Only set on entries in `deletedMeetings`. */
   deletedAt?: number;
   /**
@@ -236,6 +252,9 @@ interface AppState {
   addTeamRecapHighlight: (meetingId: string, item: Omit<TemplateInsightItem, 'id'>) => void;
   updateTeamRecapHighlight: (meetingId: string, itemId: string, updates: Partial<TemplateInsightItem>) => void;
   deleteTeamRecapHighlight: (meetingId: string, itemId: string) => void;
+
+  setCustomTemplateInfo: (meetingId: string, info: CustomTemplateInfo) => void;
+  deleteCustomTemplateInsightItem: (meetingId: string, itemId: string) => void;
 
   createMeetingForRecording: (source?: string, templateId?: MeetingTemplateId) => string;
   toggleActionItem: (meetingId: string, itemId: string) => void;
@@ -906,6 +925,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           teamRecapInfo = { summary: '', highlights: [] };
         }
 
+        let customTemplateInfo = m.customTemplateInfo;
+        if (templateId && templateId.startsWith('custom_') && (!customTemplateInfo || customTemplateInfo.templateId !== templateId)) {
+          customTemplateInfo = {
+            templateId,
+            templateName: '',
+            summary: '',
+            items: [],
+          };
+        }
+
         const updated = {
           ...m,
           templateId,
@@ -915,6 +944,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           hrStrategyInfo,
           performanceFeedbackInfo,
           teamRecapInfo,
+          customTemplateInfo,
         };
         persistMeeting(updated);
         return updated;
@@ -1235,6 +1265,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (m.id !== meetingId || !m.teamRecapInfo) return m;
         const highlights = m.teamRecapInfo.highlights.filter((i) => i.id !== itemId);
         const updated = { ...m, teamRecapInfo: { ...m.teamRecapInfo, highlights } };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+
+  setCustomTemplateInfo: (meetingId, info) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        const updated = { ...m, customTemplateInfo: info };
+        persistMeeting(updated);
+        return updated;
+      })
+    }));
+  },
+  deleteCustomTemplateInsightItem: (meetingId, itemId) => {
+    set((state) => ({
+      meetings: state.meetings.map((m) => {
+        if (m.id !== meetingId || !m.customTemplateInfo) return m;
+        const items = m.customTemplateInfo.items.filter((i) => i.id !== itemId);
+        const updated = { ...m, customTemplateInfo: { ...m.customTemplateInfo, items } };
         persistMeeting(updated);
         return updated;
       })

@@ -187,13 +187,20 @@ export type BrowserDetectionResultType =
  */
 export class BrowserDetector {
   detect(windowTitles: string[]): BrowserDetectionResultType {
-    for (const title of windowTitles) {
+    for (const rawTitle of windowTitles) {
+      // Normalize: strip unread count badges, bullet marks, leading digits, and trailing counts
+      const title = rawTitle
+        .replace(/^[\s\(\[\{]*\d+[\s\)\]\}]*/, '')
+        .replace(/^[\s\*•]+/, '')
+        .replace(/\s*\(\d+\)\s*$/, '')
+        .trim();
+
       for (const rule of BROWSER_MEETING_RULES) {
         // Exclusions always take precedence — evaluated before positive patterns
-        const isExcluded = rule.excludePatterns?.some((p) => p.test(title)) ?? false;
+        const isExcluded = rule.excludePatterns?.some((p) => p.test(title) || p.test(rawTitle)) ?? false;
         if (isExcluded) continue;
 
-        const matchesAny = rule.titlePatterns.some((p) => p.test(title));
+        const matchesAny = rule.titlePatterns.some((p) => p.test(title) || p.test(rawTitle));
         if (!matchesAny) continue;
 
         const label = this.extractMeetingLabel(title, rule.source);
@@ -230,8 +237,11 @@ export class BrowserDetector {
    *   "Google Meet - Microsoft Edge"                  → "Google Meet Meeting"
    */
   private extractMeetingLabel(title: string, source: string): string {
-    // Step 1: strip trailing browser name
+    // Step 1: strip notification counts and trailing browser name
     let working = title
+      .replace(/^[\s\(\[\{]*\d+[\s\)\]\}]*/, '')
+      .replace(/^[\s\*•]+/, '')
+      .replace(/\s*\(\d+\)\s*$/, '')
       .replace(/\s*[-–]\s*microsoft edge\s*$/i, '')
       .replace(/\s*[-–]\s*google chrome\s*$/i, '')
       .replace(/\s*[-–]\s*brave\s*$/i, '')

@@ -96,4 +96,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbDeleteChatThread: (threadId: string) => ipcRenderer.invoke('db-delete-chat-thread', threadId),
   dbAppendChatMessage: (threadId: string, message: unknown) =>
     ipcRenderer.invoke('db-append-chat-message', threadId, message),
+
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  exportPdf: (options: { html: string; defaultFileName: string }) =>
+    ipcRenderer.invoke('export-pdf', options),
 })

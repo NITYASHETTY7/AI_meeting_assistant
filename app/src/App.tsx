@@ -175,7 +175,7 @@ function App() {
       <Routes>
         <Route
           path="/onboarding"
-          element={hasAnyKey ? <Navigate to="/" replace /> : <Onboarding />}
+          element={<Onboarding />}
         />
         {/* Settings is always accessible — even with no key saved.
             This lets users delete their last key and re-enter a new one

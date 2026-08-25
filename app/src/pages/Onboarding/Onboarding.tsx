@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ArrowRight, Check, Mic, Bell, ShieldAlert } from 'lucide-react';
+import { Sparkles, ArrowRight, Check, Mic, Bell, ShieldAlert, Cpu, Waves } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { ApiKeyInput } from '../../components/ApiKeyInput';
+import { ProviderQuickSelect } from '../../components/ProviderQuickSelect';
 import { ProviderManager } from '../../services/ai/ProviderManager';
 
 /**
@@ -10,17 +11,9 @@ import { ProviderManager } from '../../services/ai/ProviderManager';
  *
  * First-run gate, four steps:
  *  0. Welcome — explains what the app does before asking for anything
- *  1. API key — BYO key model, saved in OS credential store (required to continue)
- *  2. Microphone permission — primes the OS mic permission prompt now, rather
- *     than the user discovering it's blocked mid-recording later. Not
- *     required to continue (denying is allowed — recording just won't work
- *     until granted in OS settings), but strongly encouraged.
- *  3. Notification permission — confirms native OS notifications work, since
- *     meeting detection relies on them. Not required to continue either.
- *
- * Only step 1 is enforced by App.tsx's hasAnyProviderKey() gate — steps 2/3
- * are best-effort priming, consistent with how OS permission prompts work
- * everywhere else (they can always be granted later from OS settings).
+ *  1. API key — BYO key model for both STT and AI providers (saved in OS credential store)
+ *  2. Microphone permission — primes the OS mic permission prompt now
+ *  3. Notification permission — confirms native OS notifications work
  */
 type OnboardingStep = 'welcome' | 'apiKey' | 'microphone' | 'notifications';
 
@@ -28,13 +21,12 @@ type PermissionState = 'idle' | 'checking' | 'granted' | 'denied' | 'unsupported
 
 export const Onboarding = () => {
   const navigate = useNavigate();
-  const { provider, setProvider, savedKeyProviders, markProviderKeySaved } = useAppStore();
+  const { provider, setProvider, sttProvider, setSttProvider, savedKeyProviders, markProviderKeySaved } = useAppStore();
   const [checking, setChecking] = useState(true);
   const [step, setStep] = useState<OnboardingStep>('welcome');
 
-  const providers = ProviderManager.getSupportedProviders();
-  const hasKeyForCurrentProvider = savedKeyProviders.has(provider);
   const hasAnyKey = savedKeyProviders.size > 0;
+  const isSharedKey = sttProvider === provider;
 
   // ── Microphone permission ────────────────────────────────────────────────────
   const [micState, setMicState] = useState<PermissionState>('idle');
@@ -282,48 +274,85 @@ export const Onboarding = () => {
         {step === 'apiKey' && (
           <>
             <h1 className="text-2xl font-extrabold tracking-tight mb-2" style={{ color: 'var(--text-primary)' }}>
-              Connect your AI provider
+              Connect Speech &amp; AI Providers
             </h1>
-            <p className="text-sm leading-relaxed mb-8" style={{ color: 'var(--text-tertiary)' }}>
-              Mirai Granola is bring-your-own-key: your meeting audio, transcripts, and notes are
-              processed with an AI provider you connect yourself, and everything is stored locally
-              on this device. We never see your API key or your data — it's saved directly in your
-              OS credential store.
+            <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--text-tertiary)' }}>
+              Mirai Granola decouples <strong>Speech-to-Text</strong> (live audio transcription) from{' '}
+              <strong>AI Intelligence</strong> (summaries &amp; action items). Choose your preferred engine
+              for each, or use a single provider like Groq or OpenAI for both.
             </p>
 
-            <div className="mg-card p-5 mb-6 space-y-5">
-              <div>
-                <label
-                  className="text-[11px] font-bold uppercase tracking-wider mb-2 block"
-                  style={{ color: 'var(--text-muted)' }}
+            {/* STT Provider Card */}
+            <div className="mg-card p-5 mb-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                  style={{ background: 'var(--accent-subtle)', color: 'var(--accent)' }}
                 >
-                  AI Provider
-                </label>
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="mg-input"
-                  style={{ cursor: 'pointer' }}
-                >
-                  {providers.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
+                  <Waves className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                    1. Speech-to-Text Engine
+                  </h3>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    Transcribes microphone and system voices into real-time text.
+                  </p>
+                </div>
               </div>
 
-              <ApiKeyInput provider={provider} />
+              <ProviderQuickSelect
+                value={sttProvider}
+                onChange={setSttProvider}
+                providers={ProviderManager.getSTTProviders()}
+              />
+
+              <ApiKeyInput provider={sttProvider} />
             </div>
 
-            {hasAnyKey && !hasKeyForCurrentProvider && (
-              <p
-                className="text-[11px] font-semibold mb-4 flex items-center gap-1.5"
-                style={{ color: 'var(--success)' }}
-              >
-                <Check className="w-3.5 h-3.5" />
-                You already have a key saved for another provider — you're good to continue, or add
-                this one too.
-              </p>
-            )}
+            {/* AI Intelligence Provider Card */}
+            <div className="mg-card p-5 mb-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                  style={{ background: 'var(--accent-subtle)', color: 'var(--accent)' }}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                    2. AI Intelligence (LLM) Engine
+                  </h3>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    Generates executive summaries, scorecards, and action items.
+                  </p>
+                </div>
+              </div>
+
+              <ProviderQuickSelect
+                value={provider}
+                onChange={setProvider}
+                providers={ProviderManager.getAIProviders()}
+              />
+
+              {isSharedKey ? (
+                <div
+                  className="px-3.5 py-2 rounded-lg text-xs flex items-center gap-2 border"
+                  style={{
+                    background: 'var(--accent-subtle)',
+                    borderColor: 'var(--accent-border)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                  <span>
+                    <strong>Shared API Key:</strong> Both STT and AI are set to <strong>{provider}</strong>. Your key is automatically shared.
+                  </span>
+                </div>
+              ) : (
+                <ApiKeyInput provider={provider} />
+              )}
+            </div>
 
             <button
               onClick={handleContinueFromApiKey}
@@ -337,7 +366,7 @@ export const Onboarding = () => {
 
             {!hasAnyKey && (
               <p className="text-[11px] text-center mt-3" style={{ color: 'var(--text-muted)' }}>
-                Save an API key above to continue. You can add more providers anytime in Settings.
+                Save an API key above to continue. You can change models and keys anytime in Settings.
               </p>
             )}
           </>

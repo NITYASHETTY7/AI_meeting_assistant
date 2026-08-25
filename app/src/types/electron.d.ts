@@ -84,6 +84,10 @@ export interface IElectronAPI {
     threadId: string,
     message: { id: string; role: 'user' | 'assistant' | 'system'; content: string }
   ) => Promise<{ ok: boolean; error?: string }>;
+  exportPdf: (options: {
+    html: string;
+    defaultFileName: string;
+  }) => Promise<{ ok: boolean; canceled?: boolean; filePath?: string; error?: string }>;
 }
 
 export interface MeetingDTO {

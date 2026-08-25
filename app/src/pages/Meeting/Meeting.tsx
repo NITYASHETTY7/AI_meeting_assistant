@@ -19,6 +19,7 @@ import { RecruitmentMetricsPanel } from '../../components/RecruitmentMetricsPane
 import { HrStrategyPanel } from '../../components/HrStrategyPanel';
 import { PerformanceFeedbackPanel } from '../../components/PerformanceFeedbackPanel';
 import { TeamRecapPanel } from '../../components/TeamRecapPanel';
+import { CustomTemplatePanel } from '../../components/CustomTemplatePanel';
 import { useAppStore } from '../../store/useAppStore';
 
 type WorkspaceTab = 'transcript' | 'summary';
@@ -283,6 +284,14 @@ export const Meeting = () => {
 
         {activeMeeting.templateId === 'team_recap' && (
           <TeamRecapPanel meetingId={activeMeeting.id} teamRecapInfo={activeMeeting.teamRecapInfo} />
+        )}
+
+        {Boolean(activeMeeting.templateId?.startsWith('custom_')) && (
+          <CustomTemplatePanel
+            meetingId={activeMeeting.id}
+            templateId={activeMeeting.templateId!}
+            customInfo={activeMeeting.customTemplateInfo}
+          />
         )}
 
         <SummaryPanel

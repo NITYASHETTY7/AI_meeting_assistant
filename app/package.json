@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "node patch-dev-icon.js && vite",
     "build": "tsc -b && vite build",
     "dist:win": "tsc -b && vite build && electron-builder --win",
     "lint": "oxlint",
@@ -62,6 +62,10 @@
         "to": "database/migrations"
       },
       {
+        "from": "public/icon.ico",
+        "to": "icon.ico"
+      },
+      {
         "from": "public/tray-icon.png",
         "to": "tray-icon.png"
       },
@@ -81,9 +85,8 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "public/app-icon-256.png",
-      "executableName": "Mirai-Granola",
-      "signAndEditExecutable": false
+      "icon": "public/icon.ico",
+      "executableName": "Mirai-Granola"
     },
     "forceCodeSigning": false,
     "nsis": {

@@ -75,17 +75,18 @@ export class MeetingDetectionService {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private lastDetectedId: string | null = null;
   private pollCount = 0;
+  private consecutiveAbsenceCount = 0;
   /**
-   * Timestamp (per exact meeting ID) of the last time a notification was
-   * shown for that meeting. This is a safety net against a poll re-showing
-   * the same still-open meeting immediately after dismissal due to a race
-   * between the dismiss action and the next poll tick — it is NOT meant to
-   * block a genuine leave-and-rejoin (of this meeting or an unrelated one on
-   * the same platform), so it is keyed by the specific meeting ID rather
-   * than the platform source, and uses a short window rather than a long one.
+   * Tracks IDs of meetings that have already fired a notification in the current session.
+   * Guarantees that each meeting session only notifies the user ONCE.
+   */
+  private notifiedMeetingIds = new Set<string>();
+  /**
+   * Timestamp (per meeting ID or platform key) of when a notification was shown.
+   * Uses a 30-minute cooldown to prevent repetitive spam for ongoing calls.
    */
   private lastNotifiedAtByMeetingId = new Map<string, number>();
-  private static readonly RENOTIFY_COOLDOWN_MS = 10_000;
+  private static readonly RENOTIFY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
   private isPolling = false;
 
   /** Start polling. Safe to call multiple times — will not double-start. */
@@ -114,184 +115,155 @@ export class MeetingDetectionService {
       this.pollCount++;
       const store = useAppStore.getState();
 
-    // Respect the Settings > Notifications toggles: master "disable all"
-    // switch, and the meeting-detection-specific toggle. Skip polling
-    // entirely rather than detecting-but-not-notifying, since there is no
-    // other purpose for this poll cycle if notifications are off.
-    if (store.notificationsDisabled || !store.meetingDetectionNotifications) {
-      if (store.isMeetingNotificationVisible) {
-        store.setMeetingNotificationVisible(false);
-      }
-      debugLog('Poll skipped — meeting detection notifications disabled in Settings');
-      return;
-    }
-
-    // Never show a detection notification while recording is active
-    if (store.recordingStatus === 'recording' || store.recordingStatus === 'paused') {
-      if (store.isMeetingNotificationVisible) {
-        store.setMeetingNotificationVisible(false);
-      }
-      debugLog('Poll skipped — recording in progress');
-      return;
-    }
-
-    // ── Retrieve OS window titles via Electron IPC ──────────────────────────
-    let titles: string[] = [];
-    try {
-      if (window.electronAPI?.getWindowTitles) {
-        titles = await window.electronAPI.getWindowTitles();
-      } else {
-        debugLog('IPC unavailable (browser dev mode) — skipping poll');
+      // Respect the Settings > Notifications toggles: master "disable all"
+      // switch, and the meeting-detection-specific toggle.
+      if (store.notificationsDisabled || !store.meetingDetectionNotifications) {
+        if (store.isMeetingNotificationVisible) {
+          store.setMeetingNotificationVisible(false);
+        }
+        debugLog('Poll skipped — meeting detection notifications disabled in Settings');
         return;
       }
-    } catch (err) {
-      debugLog('IPC error fetching window titles', { error: String(err) });
-      return;
-    }
 
-    debugLog(`Poll #${this.pollCount} — ${titles.length} window title(s)`, {
-      titles: titles.slice(0, 10),
-    });
-
-    // ── V1 DETECTION PIPELINE ───────────────────────────────────────────────
-    //
-    // PASS 1: Microsoft Teams Desktop
-    //   Run DesktopAppDetector — its first rule is Teams (V1), so if Teams
-    //   Desktop is open it will be returned before any other platform.
-    //
-    // PASS 2: Microsoft Teams Web (Edge / Chrome / any browser)
-    //   Run BrowserDetector — its first rule is Teams (V1), so if a Teams
-    //   browser tab is open it will be returned before Google Meet etc.
-    //
-    // PASS 3: All other future-supported platforms
-    //   Both detectors have already run; if they found nothing above it means
-    //   Teams is not active. Re-run them here would double-match, so we rely
-    //   on the existing pass-through: if pass 1 returned a non-Teams result,
-    //   it is used. Same for pass 2.
-    //
-    // Implementation detail: each detector evaluates ALL its rules in order
-    // (Teams first, then future platforms). A single call to each detector is
-    // therefore sufficient — the three logical passes collapse into two calls.
-    // ───────────────────────────────────────────────────────────────────────
-
-    // Pass 1: Desktop (Teams Desktop wins first; Zoom/Slack/Discord/Webex are
-    //         fallbacks if Teams is not open)
-    const desktopResult = this.desktop.detect(titles);
-
-    // Pass 2: Browser (Teams Web wins first; Google Meet/Zoom Web/Webex Web are
-    //         fallbacks)
-    const browserResult = this.browser.detect(titles);
-
-    // V1 priority resolution:
-    //   If Teams Desktop found → use it.
-    //   Else if Teams Web found → use it.
-    //   Else use whichever of the two detectors found something first.
-    //   If both found non-Teams results → prefer Desktop (native > browser).
-    let result = desktopResult.detected ? desktopResult : browserResult;
-
-    // Explicit Teams-first tie-break: if desktop found a future platform but
-    // browser found Teams, prefer the browser Teams result.
-    if (
-      desktopResult.detected &&
-      desktopResult.meeting.source !== 'Microsoft Teams' &&
-      browserResult.detected &&
-      browserResult.meeting.source === 'Microsoft Teams'
-    ) {
-      result = browserResult;
-      debugLog('Teams Web takes priority over non-Teams desktop platform');
-    }
-
-    // ── No meeting detected ─────────────────────────────────────────────────
-    if (!result.detected) {
-      if (store.isMeetingNotificationVisible) {
-        store.setMeetingNotificationVisible(false);
-        store.setDetectedMeeting(null);
-        debugLog('Meeting no longer detected — notification cleared');
-      } else {
-        debugLog('No meeting detected');
+      // Never show a detection notification while recording is active
+      if (store.recordingStatus === 'recording' || store.recordingStatus === 'paused') {
+        if (store.isMeetingNotificationVisible) {
+          store.setMeetingNotificationVisible(false);
+        }
+        debugLog('Poll skipped — recording in progress');
+        return;
       }
-      // The meeting window/tab is gone, so this specific detection has truly
-      // ended. Release its ID from the dismissed set — meeting IDs are
-      // content-based (source + label), so apps whose title stays static for
-      // the whole call (e.g. Teams desktop) would otherwise never be able to
-      // notify again for any later, distinct call with the same title.
-      if (this.lastDetectedId) {
-        store.clearDismissedMeeting(this.lastDetectedId);
-        this.lastNotifiedAtByMeetingId.delete(this.lastDetectedId);
+
+      // ── Retrieve OS window titles via Electron IPC ──────────────────────────
+      let titles: string[] = [];
+      try {
+        if (window.electronAPI?.getWindowTitles) {
+          titles = await window.electronAPI.getWindowTitles();
+        } else {
+          debugLog('IPC unavailable (browser dev mode) — skipping poll');
+          return;
+        }
+      } catch (err) {
+        debugLog('IPC error fetching window titles', { error: String(err) });
+        return;
       }
-      this.lastDetectedId = null;
-      return;
-    }
 
-    const meeting: DetectedMeeting = {
-      ...result.meeting,
-      detectedAt: Date.now(),
-    };
+      debugLog(`Poll #${this.pollCount} — ${titles.length} window title(s)`, {
+        titles: titles.slice(0, 10),
+      });
 
-    debugLog('Meeting detected', {
-      platform: meeting.source,
-      label: meeting.label,
-      meetingId: meeting.id,
-    });
+      // ── V1 DETECTION PIPELINE ───────────────────────────────────────────────
+      const desktopResult = this.desktop.detect(titles);
+      const browserResult = this.browser.detect(titles);
 
-    // ── Skip dismissed meetings ─────────────────────────────────────────────
-    if (store.dismissedMeetingIds.has(meeting.id)) {
-      debugLog('Notification suppressed — meeting dismissed by user', {
+      let result = desktopResult.detected ? desktopResult : browserResult;
+
+      // Explicit Teams-first tie-break: if desktop found a non-Teams platform
+      // but browser found Teams, prefer the browser Teams result.
+      if (
+        desktopResult.detected &&
+        desktopResult.meeting.source !== 'Microsoft Teams' &&
+        browserResult.detected &&
+        browserResult.meeting.source === 'Microsoft Teams'
+      ) {
+        result = browserResult;
+        debugLog('Teams Web takes priority over non-Teams desktop platform');
+      }
+
+      // ── No meeting detected ─────────────────────────────────────────────────
+      if (!result.detected) {
+        this.consecutiveAbsenceCount++;
+
+        // Only hide the in-app banner after at least 4 consecutive missing polls (20s)
+        // to prevent UI flicker when switching windows or during temporary title drop.
+        if (this.consecutiveAbsenceCount >= 4) {
+          if (store.isMeetingNotificationVisible) {
+            store.setMeetingNotificationVisible(false);
+            store.setDetectedMeeting(null);
+            debugLog('Meeting no longer detected — notification cleared');
+          }
+        }
+
+        // Only reset the lastDetectedId after a sustained absence of 3+ minutes (36 polls)
+        if (this.consecutiveAbsenceCount >= 36) {
+          if (this.lastDetectedId) {
+            store.clearDismissedMeeting(this.lastDetectedId);
+          }
+          this.lastDetectedId = null;
+        }
+        return;
+      }
+
+      // Meeting is actively detected: reset absence counter
+      this.consecutiveAbsenceCount = 0;
+
+      const meeting: DetectedMeeting = {
+        ...result.meeting,
+        detectedAt: Date.now(),
+      };
+
+      const sessionKey = `${meeting.source}:${meeting.label.toLowerCase().trim()}`;
+
+      debugLog('Meeting detected', {
+        platform: meeting.source,
+        label: meeting.label,
         meetingId: meeting.id,
       });
-      // Keep tracking this as the "current" detection even while suppressed,
-      // so that once the meeting genuinely ends (poll finds nothing), the
-      // no-meeting-detected branch above can reliably release this exact ID
-      // from the dismissed set — regardless of which code path dismissed it.
+
+      // ── Skip dismissed meetings ─────────────────────────────────────────────
+      if (store.dismissedMeetingIds.has(meeting.id)) {
+        debugLog('Notification suppressed — meeting dismissed by user', {
+          meetingId: meeting.id,
+        });
+        this.lastDetectedId = meeting.id;
+        return;
+      }
+
+      // ── Skip if already showing notification for this exact meeting ─────────
+      if (this.lastDetectedId === meeting.id && store.isMeetingNotificationVisible) {
+        debugLog('Notification already visible — no-op', { meetingId: meeting.id });
+        return;
+      }
+
+      // ── Single-notification check per meeting session ──────────────────────
+      const lastNotifiedAt = this.lastNotifiedAtByMeetingId.get(meeting.id) || this.lastNotifiedAtByMeetingId.get(sessionKey);
+      if (
+        this.notifiedMeetingIds.has(meeting.id) ||
+        this.notifiedMeetingIds.has(sessionKey) ||
+        (lastNotifiedAt && Date.now() - lastNotifiedAt < MeetingDetectionService.RENOTIFY_COOLDOWN_MS)
+      ) {
+        debugLog('Notification suppressed — already notified for this meeting session', {
+          meetingId: meeting.id,
+        });
+        this.lastDetectedId = meeting.id;
+        return;
+      }
+
+      // ── Show notification (EXACTLY ONCE) ────────────────────────────────────
+      debugLog('Showing meeting notification', {
+        platform: meeting.source,
+        label: meeting.label,
+        meetingId: meeting.id,
+      });
+
       this.lastDetectedId = meeting.id;
-      return;
-    }
+      this.notifiedMeetingIds.add(meeting.id);
+      this.notifiedMeetingIds.add(sessionKey);
+      this.lastNotifiedAtByMeetingId.set(meeting.id, Date.now());
+      this.lastNotifiedAtByMeetingId.set(sessionKey, Date.now());
 
-    // ── Skip if already showing notification for this exact meeting ─────────
-    if (this.lastDetectedId === meeting.id && store.isMeetingNotificationVisible) {
-      debugLog('Notification already visible — no-op', { meetingId: meeting.id });
-      return;
-    }
+      store.setDetectedMeeting(meeting);
+      store.setMeetingNotificationVisible(true);
 
-    // ── Cooldown safety net ──────────────────────────────────────────────────
-    // Keyed by the exact meeting ID (not platform) and kept short — this only
-    // guards against a poll re-showing a notification microseconds after it
-    // was already shown/dismissed in the same tick; it must not block a
-    // genuine leave-and-rejoin of this or any other meeting.
-    const lastNotifiedAt = this.lastNotifiedAtByMeetingId.get(meeting.id);
-    if (lastNotifiedAt && Date.now() - lastNotifiedAt < MeetingDetectionService.RENOTIFY_COOLDOWN_MS) {
-      debugLog('Notification suppressed — within re-notify cooldown', {
-        meetingId: meeting.id,
-        msSinceLast: Date.now() - lastNotifiedAt,
-      });
-      return;
-    }
-
-    // ── Show notification ───────────────────────────────────────────────────
-    debugLog('Showing meeting notification', {
-      platform: meeting.source,
-      label: meeting.label,
-      meetingId: meeting.id,
-    });
-
-    this.lastDetectedId = meeting.id;
-    this.lastNotifiedAtByMeetingId.set(meeting.id, Date.now());
-    store.setDetectedMeeting(meeting);
-    store.setMeetingNotificationVisible(true);
-
-    // Fire a real OS-level notification (Windows Action Center, etc.) in
-    // addition to the in-app banner. This is what actually alerts the user
-    // when Mirai Granola is in the background/unfocused — the in-app banner
-    // handles the foreground case. Clicking the native notification brings
-    // the app window to focus (handled in main.ts).
-    if (window.electronAPI?.showNativeNotification) {
-      window.electronAPI
-        .showNativeNotification({
-          title: 'Meeting in progress',
-          body: `${meeting.label}\nClick to open Mirai Granola and start taking notes.`,
-        })
-        .catch((err) => debugLog('Native notification failed', { error: String(err) }));
-    }
+      // Fire a single native OS notification (Windows Action Center)
+      if (window.electronAPI?.showNativeNotification) {
+        window.electronAPI
+          .showNativeNotification({
+            title: 'Meeting in progress',
+            body: `${meeting.label}\nClick to open Mirai Granola and start taking notes.`,
+          })
+          .catch((err) => debugLog('Native notification failed', { error: String(err) }));
+      }
     } finally {
       this.isPolling = false;
     }

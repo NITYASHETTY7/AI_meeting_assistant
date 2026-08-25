@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Sparkles, Monitor, Disc, HardDrive, Info, Bell, Languages } from 'lucide-react';
 
 export type SettingsTab = 'model' | 'appearance' | 'notifications' | 'language' | 'recording' | 'storage' | 'about';
@@ -7,6 +8,8 @@ interface SettingsLayoutProps {
   children: (activeTab: SettingsTab) => ReactNode;
 }
 
+const VALID_TABS: SettingsTab[] = ['model', 'appearance', 'notifications', 'language', 'recording', 'storage', 'about'];
+
 /**
  * SettingsLayout
  *
@@ -14,7 +17,22 @@ interface SettingsLayoutProps {
  * All colours use semantic CSS variables — no hardcoded Tailwind colour classes.
  */
 export const SettingsLayout = ({ children }: SettingsLayoutProps) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('model');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as SettingsTab | null;
+  const initialTab = tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'model';
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    if (tabParam && VALID_TABS.includes(tabParam) && tabParam !== activeTab) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam, activeTab]);
+
+  const handleTabChange = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
   const navigationItems: { id: SettingsTab; label: string; icon: typeof Sparkles }[] = [
     { id: 'model',         label: 'Model Provider', icon: Sparkles    },
@@ -42,7 +60,7 @@ export const SettingsLayout = ({ children }: SettingsLayoutProps) => {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleTabChange(item.id)}
               className="flex items-center gap-3 px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all duration-150 cursor-pointer whitespace-nowrap md:w-full"
               style={{
                 background: isSelected ? 'var(--accent-subtle)' : 'transparent',

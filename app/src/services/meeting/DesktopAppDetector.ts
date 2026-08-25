@@ -181,13 +181,20 @@ export class DesktopAppDetector {
    * Returns `{ detected: false }` if no meeting window is found.
    */
   detect(windowTitles: string[]): BrowserDetectionResultType {
-    for (const title of windowTitles) {
+    for (const rawTitle of windowTitles) {
+      // Normalize: strip unread count badges, bullet marks, leading digits, and trailing counts
+      const title = rawTitle
+        .replace(/^[\s\(\[\{]*\d+[\s\)\]\}]*/, '')
+        .replace(/^[\s\*•]+/, '')
+        .replace(/\s*\(\d+\)\s*$/, '')
+        .trim();
+
       for (const rule of DESKTOP_MEETING_RULES) {
         // Exclusions always take precedence — evaluated before positive patterns
-        const isExcluded = rule.excludePatterns?.some((p) => p.test(title)) ?? false;
+        const isExcluded = rule.excludePatterns?.some((p) => p.test(title) || p.test(rawTitle)) ?? false;
         if (isExcluded) continue;
 
-        const matchesAny = rule.titlePatterns.some((p) => p.test(title));
+        const matchesAny = rule.titlePatterns.some((p) => p.test(title) || p.test(rawTitle));
         if (!matchesAny) continue;
 
         const label = this.extractLabel(title, rule.source);

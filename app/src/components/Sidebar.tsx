@@ -100,25 +100,22 @@ export const Sidebar = () => {
         <button
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="flex items-center justify-center w-8 h-8 rounded-xl shadow-md shrink-0 cursor-pointer transition-opacity hover:opacity-80 active:opacity-70 focus:outline-none"
-          style={{ background: 'var(--gradient-brand)' }}
+          className="flex items-center justify-center w-8 h-8 rounded-xl shadow-md shrink-0 cursor-pointer transition-transform hover:scale-105 active:scale-95 focus:outline-none"
+          style={{ background: 'linear-gradient(135deg, #2898EB 0%, #146CB8 100%)' }}
         >
           <svg className="w-[18px] h-[18px] text-white" viewBox="0 0 24 24" fill="none">
             <path
-              d="M4 5.5C4 4.12 5.12 3 6.5 3h11C18.88 3 20 4.12 20 5.5v8c0 1.38-1.12 2.5-2.5 2.5H9l-4 4v-4H6.5C5.12 16 4 14.88 4 13.5v-8z"
-              fill="currentColor"
-              opacity={0.22}
-            />
-            <path
-              d="M4 5.5C4 4.12 5.12 3 6.5 3h11C18.88 3 20 4.12 20 5.5v8c0 1.38-1.12 2.5-2.5 2.5H9l-4 4v-4H6.5C5.12 16 4 14.88 4 13.5v-8z"
-              stroke="currentColor"
-              strokeWidth={1.4}
+              d="M7.5 6H16.5C18 6 19.2 7.2 19.2 8.7V13.3C19.2 14.8 18 16 16.5 16H9.5L6 19L6.4 16H7.5C6 16 4.8 14.8 4.8 13.3V8.7C4.8 7.2 6 6 7.5 6Z"
+              fill="rgba(255, 255, 255, 0.1)"
+              stroke="#FFFFFF"
+              strokeWidth={1.5}
               strokeLinejoin="round"
+              strokeLinecap="round"
             />
-            <path d="M8 9.5v2" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
-            <path d="M10.5 7.5v6" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
-            <path d="M13 9v4" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
-            <path d="M15.5 7.5v6" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
+            <line x1="8.5" y1="11" x2="8.5" y2="13.2" stroke="#FFFFFF" strokeWidth={1.5} strokeLinecap="round" />
+            <line x1="11" y1="8.6" x2="11" y2="13.6" stroke="#FFFFFF" strokeWidth={1.5} strokeLinecap="round" />
+            <line x1="13.5" y1="9.8" x2="13.5" y2="13.2" stroke="#FFFFFF" strokeWidth={1.5} strokeLinecap="round" />
+            <line x1="15.8" y1="8.6" x2="15.8" y2="13.6" stroke="#FFFFFF" strokeWidth={1.5} strokeLinecap="round" />
           </svg>
         </button>
 

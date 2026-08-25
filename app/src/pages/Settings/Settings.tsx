@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Check, X, Loader2, Mic, Sparkles } from 'lucide-react';
 import { ContentLayout } from '../../components/ContentLayout';
 import { SettingsLayout, type SettingsTab } from '../../components/SettingsLayout';
@@ -16,6 +17,7 @@ import { ProviderManager } from '../../services/ai/ProviderManager';
 import { POST_RECORDING_ONLY_PROVIDERS } from '../../services/transcription/TranscriptionManager';
 
 export const Settings = () => {
+  const navigate = useNavigate();
   const store = useAppStore();
   
   // AI Connection Test States
@@ -105,6 +107,26 @@ export const Settings = () => {
   useEffect(() => {
     void refreshAudioStorageInfo();
   }, []);
+
+  // ── Launch at login / background startup ────────────────────────────────────
+  const [openAtLogin, setOpenAtLogin] = useState(false);
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (api?.getOpenAtLogin) {
+      api.getOpenAtLogin().then((res) => {
+        if (res.ok) setOpenAtLogin(res.openAtLogin);
+      }).catch(() => {});
+    }
+  }, []);
+
+  const handleToggleOpenAtLogin = async (enabled: boolean) => {
+    setOpenAtLogin(enabled);
+    const api = window.electronAPI;
+    if (api?.setOpenAtLogin) {
+      await api.setOpenAtLogin(enabled).catch(() => {});
+    }
+  };
 
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 KB';
@@ -618,6 +640,15 @@ export const Settings = () => {
                       onChange={store.setCalendarReminderNotifications}
                     />
                   </SettingsCard>
+
+                  <SettingsCard>
+                    <ToggleRow
+                      label="Launch on system startup"
+                      description="Automatically run Mirai Granola in the system tray when you log into Windows, keeping background meeting detection continuously active even when the window is closed."
+                      checked={openAtLogin}
+                      onChange={handleToggleOpenAtLogin}
+                    />
+                  </SettingsCard>
                 </SettingsSection>
               );
 
@@ -830,7 +861,19 @@ export const Settings = () => {
                     />
                     <SettingsRow
                       label="Build Version"
-                      control={<span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v1.0.0-alpha.1</span>}
+                      control={<span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v1.0.0</span>}
+                    />
+                    <SettingsRow
+                      label="Welcome & Setup Wizard"
+                      description="Replay the welcome guide, decoupled provider overview, and permission prompts."
+                      control={
+                        <ActionButton
+                          variant="secondary"
+                          onClick={() => navigate('/onboarding')}
+                        >
+                          Launch Setup Wizard
+                        </ActionButton>
+                      }
                     />
                   </SettingsCard>
                 </SettingsSection>

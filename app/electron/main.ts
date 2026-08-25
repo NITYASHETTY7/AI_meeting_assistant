@@ -1,19 +1,40 @@
 import { app, BrowserWindow, ipcMain, Notification, dialog, shell, Tray, Menu, nativeImage, desktopCapturer, session } from 'electron'
 import { join } from 'path'
 import fs, { promises as fsPromises } from 'fs'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import keytar from 'keytar'
 import * as db from './db'
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+// Prevent Chromium from throttling background timers or suspending the renderer
+// when the window is minimized or hidden in the system tray.
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 
 // Set official app name and Windows AppUserModelID matching package.json appId
 // so OS notifications display "Mirai Granola" instead of "electron" in Windows Action Center.
 app.name = 'Mirai Granola'
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.miraigranola.app')
+  app.setAppUserModelId(app.isPackaged ? 'com.miraigranola.app' : process.execPath)
+}
+
+// Enforce single-instance lock to prevent multiple app processes from locking the GPU/disk cache
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
 }
 
 /** Keychain service name — consistent across all platforms */
@@ -24,17 +45,19 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 
-function getAppIconPath(): string | undefined {
+function getAppPngPath(): string | undefined {
   const possiblePaths = [
     join(process.resourcesPath, 'app-icon-256.png'),
-    join(process.resourcesPath, 'tray-icon.png'),
     join(app.getAppPath(), 'public', 'app-icon-256.png'),
     join(app.getAppPath(), 'dist', 'app-icon-256.png'),
-    join(app.getAppPath(), 'public', 'tray-icon.png'),
     join(process.cwd(), 'public', 'app-icon-256.png'),
-    join(process.cwd(), 'public', 'tray-icon.png'),
+    join(process.cwd(), 'dist', 'app-icon-256.png'),
     join(import.meta.dirname, '..', 'public', 'app-icon-256.png'),
     join(import.meta.dirname, '..', 'dist', 'app-icon-256.png'),
+    join(process.resourcesPath, 'icon.ico'),
+    join(app.getAppPath(), 'public', 'icon.ico'),
+    join(process.cwd(), 'public', 'icon.ico'),
+    join(import.meta.dirname, '..', 'public', 'icon.ico'),
   ];
 
   for (const p of possiblePaths) {
@@ -49,11 +72,11 @@ function getAppIconPath(): string | undefined {
 
 function getAppIcon(sizePx?: number): Electron.NativeImage | undefined {
   try {
-    const p = getAppIconPath();
+    const p = getAppPngPath();
     if (p) {
       const img = nativeImage.createFromPath(p);
       if (!img.isEmpty()) {
-        return sizePx ? img.resize({ width: sizePx, height: sizePx }) : img;
+        return sizePx ? img.resize({ width: sizePx, height: sizePx, quality: 'best' }) : img;
       }
     }
   } catch (err) {
@@ -65,14 +88,10 @@ function getAppIcon(sizePx?: number): Electron.NativeImage | undefined {
 async function createTray() {
   if (tray) return
   try {
-    let icon = getAppIcon(32)
+    const icon = getAppIcon(32) || getAppIcon(256)
     if (!icon || icon.isEmpty()) {
-      icon = nativeImage.createFromBuffer(
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA0SURBVDhPY/wPBAwUACYoTVsDRo1Hw0A0Y2A0DUw0GkZ4gNE0MOGgAYqR/wcYGp+h8RoYAAAkoxn3/nfl4AAAAABJRU5ErkJggg==',
-          'base64'
-        )
-      )
+      console.warn('[main] Tray icon could not be loaded.')
+      return
     }
     tray = new Tray(icon)
     const contextMenu = Menu.buildFromTemplate([
@@ -97,6 +116,17 @@ async function createTray() {
     ])
     tray.setToolTip('Mirai Granola — Meeting Assistant')
     tray.setContextMenu(contextMenu)
+    tray.on('click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+          mainWindow.hide()
+        } else {
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      }
+    })
     tray.on('double-click', () => {
       if (mainWindow) {
         if (mainWindow.isMinimized()) mainWindow.restore()
@@ -109,14 +139,16 @@ async function createTray() {
   }
 }
 
+let hasShownCloseNotice = false
+
 function createWindow() {
-  const iconPath = getAppIconPath()
-  const appIcon = getAppIcon(256)
+  const iconPath = getAppPngPath()
+  const appIcon = getAppIcon(256) || (iconPath ? nativeImage.createFromPath(iconPath) : undefined)
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Mirai Granola',
-    icon: iconPath || appIcon,
+    icon: appIcon || iconPath,
     webPreferences: {
       preload: join(import.meta.dirname, 'preload.js'),
       nodeIntegration: false,
@@ -135,6 +167,18 @@ function createWindow() {
     if (!isQuitting) {
       event.preventDefault()
       win.hide()
+      if (!hasShownCloseNotice && Notification.isSupported()) {
+        hasShownCloseNotice = true
+        try {
+          const notice = new Notification({
+            title: 'Mirai Granola is running in the background',
+            body: 'Mirai Granola will continue detecting meetings in the background from the system tray.',
+            icon: getAppIcon(128),
+            silent: true,
+          })
+          notice.show()
+        } catch {}
+      }
       return false
     }
   })
@@ -155,24 +199,45 @@ function createWindow() {
 async function getActiveWindowTitles(): Promise<string[]> {
   try {
     if (process.platform === 'win32') {
-      const ps = "$ProgressPreference = 'SilentlyContinue'; Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object -ExpandProperty MainWindowTitle"
-      const encoded = Buffer.from(ps, 'utf16le').toString('base64')
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
-        // 8s was too tight — PowerShell's own interpreter cold-start plus
-        // Get-Process enumeration can exceed that under normal system load
-        // (e.g. while actively recording/transcribing), causing this poll
-        // (which runs every 5s) to hit the timeout and log a warning on
-        // nearly every cycle even though the fallback (return []) is
-        // harmless. 15s gives real headroom without meaningfully delaying
-        // meeting-detection responsiveness, since a timeout here just skips
-        // that one poll cycle rather than blocking anything else.
-        { timeout: 15000, windowsHide: true }
-      )
-      return stdout
-        .split(/\r?\n/)
-        .map((t) => t.trim())
-        .filter(Boolean)
+      const tasklistExe = fs.existsSync('C:\\Windows\\System32\\tasklist.exe')
+        ? 'C:\\Windows\\System32\\tasklist.exe'
+        : 'tasklist.exe'
+
+      try {
+        const { stdout } = await execFileAsync(tasklistExe, ['/v', '/fo', 'csv', '/nh'], {
+          windowsHide: true,
+          timeout: 15000,
+          maxBuffer: 16 * 1024 * 1024,
+        })
+        const titles: string[] = []
+        const lines = stdout.split(/\r?\n/)
+        for (const line of lines) {
+          if (!line.trim()) continue
+          const matches = line.match(/"(?:[^"\\]|\\.)*"/g)
+          if (matches && matches.length >= 9) {
+            const rawTitle = matches[8].slice(1, -1).trim()
+            if (
+              rawTitle &&
+              rawTitle !== 'N/A' &&
+              rawTitle !== 'OleMainThreadWndName' &&
+              rawTitle !== 'DWM Notification Window' &&
+              rawTitle !== 'Task Host Window'
+            ) {
+              titles.push(rawTitle)
+            }
+          }
+        }
+        if (titles.length > 0) return titles
+      } catch {
+        // Fallback to PowerShell if tasklist throws
+        const psCmd = "$ProgressPreference = 'SilentlyContinue'; Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object -ExpandProperty MainWindowTitle"
+        const encoded = Buffer.from(psCmd, 'utf16le').toString('base64')
+        const { stdout } = await execAsync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, {
+          timeout: 15000,
+          windowsHide: true,
+        })
+        return stdout.split(/\r?\n/).map((t) => t.trim()).filter(Boolean)
+      }
     }
 
     if (process.platform === 'darwin') {
@@ -196,11 +261,6 @@ async function getActiveWindowTitles(): Promise<string[]> {
       })
       .filter(Boolean)
   } catch (err) {
-    // Concise, single-line warning — the full error object (with stack
-    // trace, cmd, stdout/stderr) is verbose and this is a routine,
-    // already-handled fallback (every caller treats an empty array as
-    // "no titles available right now"), not something that needs
-    // investigating on every occurrence.
     const message = err instanceof Error ? err.message : String(err)
     console.warn('[main] getActiveWindowTitles failed (will retry next poll):', message)
     return []
@@ -527,6 +587,30 @@ app.whenReady().then(() => {
     }
   })
 
+  // ── Open at Login / Startup IPC ───────────────────────────────────────────
+  ipcMain.handle('set-open-at-login', async (_event, openAtLogin: boolean) => {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin,
+        openAsHidden: true,
+      })
+      return { ok: true }
+    } catch (err) {
+      console.error('[main] set-open-at-login failed:', err)
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('get-open-at-login', async () => {
+    try {
+      const settings = app.getLoginItemSettings()
+      return { ok: true, openAtLogin: settings.openAtLogin }
+    } catch (err) {
+      console.error('[main] get-open-at-login failed:', err)
+      return { ok: false, openAtLogin: false, error: String(err) }
+    }
+  })
+
   // ── Credential store IPC (keytar → OS Credential Manager) ──────────────────
   // All three handlers use the same KEYTAR_SERVICE; the `account` argument is
   // the provider name (e.g. "OpenAI", "Anthropic"). Keys are NEVER returned to
@@ -710,6 +794,55 @@ app.whenReady().then(() => {
       return { ok: true }
     } catch (err) {
       console.error('[db] append-chat-message failed:', err)
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  ipcMain.handle('export-pdf', async (_event, { html, defaultFileName }: { html: string; defaultFileName: string }) => {
+    try {
+      const sanitizedName = (defaultFileName || 'meeting_summary')
+        .replace(/[/\\?%*:|"<>]/g, '_')
+        .trim()
+      const defaultNameWithExt = sanitizedName.endsWith('.pdf') ? sanitizedName : `${sanitizedName}.pdf`
+
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Export Meeting Summary as PDF',
+        defaultPath: defaultNameWithExt,
+        filters: [{ name: 'PDF Document (*.pdf)', extensions: ['pdf'] }],
+      })
+
+      if (canceled || !filePath) {
+        return { ok: false, canceled: true }
+      }
+
+      // Create a hidden offscreen window to render the HTML document and generate PDF
+      const pdfWindow = new BrowserWindow({
+        show: false,
+        width: 1024,
+        height: 768,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+        },
+      })
+
+      await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+
+      const pdfBuffer = await pdfWindow.webContents.printToPDF({
+        margins: {
+          marginType: 'default',
+        },
+        printBackground: true,
+        pageSize: 'A4',
+      })
+
+      await fsPromises.writeFile(filePath, pdfBuffer)
+      pdfWindow.destroy()
+
+      return { ok: true, filePath }
+    } catch (err) {
+      console.error('[main] export-pdf error:', err)
       return { ok: false, error: String(err) }
     }
   })
