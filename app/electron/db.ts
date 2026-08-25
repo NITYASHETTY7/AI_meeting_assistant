@@ -17,8 +17,9 @@ let sqlite: Database.Database | null = null
  */
 export function initDatabase(dbDir: string, migrationsFolder: string) {
   const dbPath = join(dbDir, 'granola.db')
-  sqlite = new Database(dbPath)
+  sqlite = new Database(dbPath, { timeout: 5000 })
   sqlite.pragma('journal_mode = WAL')
+  sqlite.pragma('busy_timeout = 5000')
   db = drizzle(sqlite, { schema })
   migrate(db, { migrationsFolder })
   return db

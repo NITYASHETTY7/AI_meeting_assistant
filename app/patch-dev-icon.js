@@ -36,4 +36,27 @@ for (const exe of electronExes) {
   } catch (err) {
     console.error('Failed to patch:', exe, err.message);
   }
+
+  // Ensure electron.exe launched without arguments (e.g. from Windows Toast clicks)
+  // routes to Mirai Granola's main.js instead of opening the default Electron screen
+  try {
+    const resourcesDir = path.join(path.dirname(exe), 'resources', 'app');
+    fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(resourcesDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'mirai-granola',
+          main: 'index.js',
+        },
+        null,
+        2
+      )
+    );
+    const targetMain = path.resolve('dist-electron/main.js').replace(/\\/g, '/');
+    fs.writeFileSync(
+      path.join(resourcesDir, 'index.js'),
+      `const fs = require('fs');\nconst target = ${JSON.stringify(targetMain)};\nif (fs.existsSync(target)) {\n  require(target);\n}\n`
+    );
+  } catch {}
 }

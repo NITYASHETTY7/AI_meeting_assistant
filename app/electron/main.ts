@@ -20,7 +20,7 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 // so OS notifications display "Mirai Granola" instead of "electron" in Windows Action Center.
 app.name = 'Mirai Granola'
 if (process.platform === 'win32') {
-  app.setAppUserModelId(app.isPackaged ? 'com.miraigranola.app' : process.execPath)
+  app.setAppUserModelId('com.miraigranola.app')
 }
 
 // Enforce single-instance lock to prevent multiple app processes from locking the GPU/disk cache
@@ -31,7 +31,7 @@ if (!gotTheLock) {
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
+      if (!mainWindow.isVisible()) mainWindow.show()
       mainWindow.focus()
     }
   })
@@ -44,6 +44,10 @@ const KEYTAR_SERVICE = 'mirai-granola'
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+
+function getAppIconPath(): string | undefined {
+  return getAppPngPath()
+}
 
 function getAppPngPath(): string | undefined {
   const possiblePaths = [
@@ -268,6 +272,33 @@ async function getActiveWindowTitles(): Promise<string[]> {
 }
 
 app.whenReady().then(() => {
+  // On Windows, register a Start Menu shortcut with the AppUserModelId so that
+  // clicking a Windows Toast Notification activates the running app instead of launching
+  // a blank Electron window.
+  if (process.platform === 'win32') {
+    try {
+      const shortcutPath = join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Mirai Granola.lnk'
+      )
+      const iconPath = getAppIconPath()
+      shell.writeShortcutLink(shortcutPath, 'create', {
+        target: process.execPath,
+        args: isDev ? `"${app.getAppPath()}"` : '',
+        appUserModelId: 'com.miraigranola.app',
+        icon: iconPath,
+        iconIndex: 0,
+        description: 'Mirai Granola — Meeting Assistant',
+      })
+    } catch (err) {
+      console.warn('[main] Failed to create Start Menu shortcut for notifications:', err)
+    }
+  }
+
   // Registers the modern, officially-documented display-media request
   // handler for system audio loopback capture (see Electron's
   // desktopCapturer docs). The renderer calls
@@ -566,10 +597,11 @@ app.whenReady().then(() => {
         ? options.title
         : `Mirai Granola — ${options.title}`;
 
+      const iconPath = getAppIconPath()
       const notification = new Notification({
         title: displayTitle,
         body: options.body,
-        icon: getAppIcon(128),
+        icon: iconPath,
         silent: false,
       })
       notification.on('click', () => {
@@ -578,6 +610,12 @@ app.whenReady().then(() => {
           mainWindow.show()
           mainWindow.focus()
         }
+      })
+      notification.on('show', () => {
+        console.log('[main] Native OS notification displayed successfully')
+      })
+      notification.on('failed', (_e, err) => {
+        console.warn('[main] Native OS notification failed to display:', err)
       })
       notification.show()
       return { ok: true }
@@ -857,9 +895,21 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  isQuitting = true
+  try {
+    db.closeDatabase()
+  } catch {}
+})
+
+app.on('will-quit', () => {
+  try {
+    db.closeDatabase()
+  } catch {}
+})
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && isQuitting) {
     app.quit()
   }
-  db.closeDatabase()
 })

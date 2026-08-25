@@ -66,26 +66,13 @@ const BROWSER_MEETING_RULES: BrowserMeetingRule[] = [
     source: 'Microsoft Teams',
     tier: 'v1',
     titlePatterns: [
-      // teams.microsoft.com URL sometimes surfaces in the window title —
-      // only meaningful combined with an explicit call/meeting signal below.
-      /(meeting|call|video\s*call)\s*\|\s*microsoft teams/i,
-      // "Teams Meeting" standalone
+      /\b(meeting|call|video\s*call)\b.*microsoft teams/i,
+      /microsoft teams.*(meeting|call|video\s*call)/i,
       /teams meeting/i,
-      // "Meeting with <Person>" — 1:1 call title
       /meeting with\s+\S+/i,
-      // Bare "Microsoft Teams" or "Microsoft Teams - <browser>" with NO other
-      // page-type prefix (Chat|/Calendar|/Activity| etc. are excluded below) —
-      // this is what the standalone Teams web app tab shows while in a call.
-      /^microsoft teams(\s*[-–]\s*(microsoft edge|google chrome|brave|arc|chromium))?$/i,
+      /(meeting|call)\s*\|\s*microsoft teams/i,
     ],
     excludePatterns: [
-      // Chat, calendar, activity, and other non-call Teams surfaces — these
-      // titles also contain "Microsoft Teams" but there is normally no
-      // active call. HOWEVER: Teams prefixes an active call's title with
-      // "Chat |" when viewed from the Chat panel (observed:
-      // "Chat | Meeting with X | Microsoft Teams - Microsoft Edge") — so
-      // these must NOT exclude when a real meeting/call signal is also
-      // present later in the title.
       /^chat\s*\|(?!.*\b(meeting|call)\b)/i,
       /^calendar\s*\|(?!.*\b(meeting|call)\b)/i,
       /^activity\s*\|/i,
@@ -94,6 +81,7 @@ const BROWSER_MEETING_RULES: BrowserMeetingRule[] = [
       /^apps\s*\|/i,
       /sign\s*in.*teams/i,
       /teams.*sign\s*in/i,
+      /^microsoft teams(\s*[-–]\s*(microsoft edge|google chrome|brave|arc|chromium))?$/i,
     ],
   },
 
@@ -257,10 +245,16 @@ export class BrowserDetector {
       if (candidate.length > 2) return candidate;
     }
 
-    // Step 3: Google Meet dash format "Daily Standup – Google Meet"
+    // Step 3: Google Meet dash format "Daily Standup – Google Meet" or "Meet – abc-defg-hij"
     const meetDashMatch = working.match(/^(.+?)\s*[-–—]\s*google meet/i);
     if (meetDashMatch) {
       const candidate = meetDashMatch[1].trim();
+      if (candidate.length > 2) return candidate;
+    }
+
+    const meetPrefixMatch = working.match(/^meet\s*[-–:]\s*(.+)$/i);
+    if (meetPrefixMatch) {
+      const candidate = meetPrefixMatch[1].trim();
       if (candidate.length > 2) return candidate;
     }
 

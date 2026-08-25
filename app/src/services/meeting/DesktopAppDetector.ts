@@ -45,38 +45,22 @@ const DESKTOP_MEETING_RULES: DesktopMeetingRule[] = [
     source: 'Microsoft Teams',
     tier: 'v1',
     titlePatterns: [
-      // New Teams app — title is simply "Teams" when in a call/meeting
-      /^teams$/i,
-      // In-call overlay windows
       /(meeting|call)\s*\|\s*microsoft teams/i,
       /(meeting|call)\s*in\s*progress/i,
-      // "Meeting with <Person>" — Teams desktop generates this during 1:1 calls.
-      // NOTE: does not match "Chat with <Person>" or "Chat | <Person>".
       /meeting with\s+\S+/i,
-      // "Teams Meeting" standalone
       /teams meeting/i,
-      // "<Title> – Microsoft Teams" or "<Title> — Microsoft Teams" — the title
-      // segment must itself signal a call ("Meeting"/"Call"), otherwise this
-      // also matches idle windows like "Calendar – Microsoft Teams".
       /(meeting|call).*[-–—]\s*microsoft teams/i,
       /microsoft teams\s*[-–—]\s*(meeting|call)/i,
     ],
     excludePatterns: [
-      // Splash / login screens — not an active meeting
+      /^teams$/i,
+      /^microsoft teams$/i,
       /sign\s*in.*teams/i,
       /sign\s*up.*teams/i,
       /teams.*sign\s*in/i,
       /microsoft teams.*update/i,
-      // Chat, calendar, activity, and other non-call Teams surfaces —
-      // "Microsoft Teams" appears in these titles too, but there is
-      // normally no active call. HOWEVER: Teams prefixes an active call's
-      // title with "Chat |" when viewed from the Chat panel (observed title:
-      // "Chat | Meeting with X | Microsoft Teams") — so these exclusions
-      // must NOT fire when the title also contains an actual meeting/call
-      // signal. Negative lookahead: exclude "Chat |" ONLY if nothing later
-      // in the title says "meeting" or "call".
-      /^chat\s*\|(?!.*\b(meeting|call)\b)/i,
-      /^calendar\s*\|(?!.*\b(meeting|call)\b)/i,
+      /^chat\s*\|/i,
+      /^calendar\s*\|/i,
       /^activity\s*\|/i,
       /^teams\s*\|/i,
       /^files\s*\|/i,

@@ -174,21 +174,19 @@ export class MeetingDetectionService {
       if (!result.detected) {
         this.consecutiveAbsenceCount++;
 
-        // Only hide the in-app banner after at least 4 consecutive missing polls (20s)
-        // to prevent UI flicker when switching windows or during temporary title drop.
-        if (this.consecutiveAbsenceCount >= 4) {
+        // After 3 consecutive missing polls (15s), hide banner and reset session memory
+        // so leaving and rejoining later will immediately trigger a fresh notification.
+        if (this.consecutiveAbsenceCount >= 3) {
           if (store.isMeetingNotificationVisible) {
             store.setMeetingNotificationVisible(false);
             store.setDetectedMeeting(null);
-            debugLog('Meeting no longer detected — notification cleared');
+            debugLog('Meeting no longer detected — notification and session memory cleared');
           }
-        }
-
-        // Only reset the lastDetectedId after a sustained absence of 3+ minutes (36 polls)
-        if (this.consecutiveAbsenceCount >= 36) {
           if (this.lastDetectedId) {
             store.clearDismissedMeeting(this.lastDetectedId);
           }
+          this.notifiedMeetingIds.clear();
+          this.lastNotifiedAtByMeetingId.clear();
           this.lastDetectedId = null;
         }
         return;
@@ -202,12 +200,18 @@ export class MeetingDetectionService {
         detectedAt: Date.now(),
       };
 
-      const sessionKey = `${meeting.source}:${meeting.label.toLowerCase().trim()}`;
+      // Canonical session key normalizing platform and label variants
+      const cleanLabel = meeting.label
+        .toLowerCase()
+        .replace(/^(chat\s*\|\s*|meet\s*[-–:]\s*)/i, '')
+        .replace(/[^a-z0-9]/g, '');
+      const sessionKey = `${meeting.source.toLowerCase()}:${cleanLabel}`;
 
       debugLog('Meeting detected', {
         platform: meeting.source,
         label: meeting.label,
         meetingId: meeting.id,
+        sessionKey,
       });
 
       // ── Skip dismissed meetings ─────────────────────────────────────────────
@@ -234,6 +238,7 @@ export class MeetingDetectionService {
       ) {
         debugLog('Notification suppressed — already notified for this meeting session', {
           meetingId: meeting.id,
+          sessionKey,
         });
         this.lastDetectedId = meeting.id;
         return;
