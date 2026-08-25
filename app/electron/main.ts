@@ -273,29 +273,33 @@ async function getActiveWindowTitles(): Promise<string[]> {
 
 app.whenReady().then(() => {
   // On Windows, register a Start Menu shortcut with the AppUserModelId so that
-  // clicking a Windows Toast Notification activates the running app instead of launching
-  // a blank Electron window.
+  // Windows Action Center can associate and display OS Toast Notifications for the executable.
   if (process.platform === 'win32') {
     try {
-      const shortcutPath = join(
+      const shortcutDir = join(
         app.getPath('appData'),
         'Microsoft',
         'Windows',
         'Start Menu',
-        'Programs',
-        'Mirai Granola.lnk'
+        'Programs'
       )
+      if (!fs.existsSync(shortcutDir)) {
+        fs.mkdirSync(shortcutDir, { recursive: true })
+      }
+      const shortcutPath = join(shortcutDir, 'Mirai Granola.lnk')
       const iconPath = getAppIconPath()
-      shell.writeShortcutLink(shortcutPath, 'create', {
+      const shortcutOptions: Electron.ShortcutDetails = {
         target: process.execPath,
         args: isDev ? `"${app.getAppPath()}"` : '',
         appUserModelId: 'com.miraigranola.app',
         icon: iconPath,
         iconIndex: 0,
         description: 'Mirai Granola — Meeting Assistant',
-      })
+      }
+      const mode = fs.existsSync(shortcutPath) ? 'replace' : 'create'
+      shell.writeShortcutLink(shortcutPath, mode, shortcutOptions)
     } catch (err) {
-      console.warn('[main] Failed to create Start Menu shortcut for notifications:', err)
+      console.warn('[main] Failed to create/update Start Menu shortcut for notifications:', err)
     }
   }
 

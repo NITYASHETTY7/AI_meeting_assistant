@@ -86,7 +86,8 @@
         }
       ],
       "icon": "public/icon.ico",
-      "executableName": "Mirai-Granola"
+      "executableName": "Mirai-Granola",
+      "signAndEditExecutable": false
     },
     "forceCodeSigning": false,
     "nsis": {
