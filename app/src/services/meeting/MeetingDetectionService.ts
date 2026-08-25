@@ -86,7 +86,7 @@ export class MeetingDetectionService {
    * Uses a 30-minute cooldown to prevent repetitive spam for ongoing calls.
    */
   private lastNotifiedAtByMeetingId = new Map<string, number>();
-  private static readonly RENOTIFY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly RENOTIFY_COOLDOWN_MS = 60 * 1000; // 60 seconds
   private isPolling = false;
 
   /** Start polling. Safe to call multiple times — will not double-start. */
@@ -174,13 +174,13 @@ export class MeetingDetectionService {
       if (!result.detected) {
         this.consecutiveAbsenceCount++;
 
-        // After 3 consecutive missing polls (15s), hide banner and reset session memory
-        // so leaving and rejoining later will immediately trigger a fresh notification.
-        if (this.consecutiveAbsenceCount >= 3) {
+        // After 2 consecutive missing polls (10s), hide banner and reset session memory
+        // so leaving and rejoining later immediately triggers a fresh notification.
+        if (this.consecutiveAbsenceCount >= 2) {
           if (store.isMeetingNotificationVisible) {
             store.setMeetingNotificationVisible(false);
             store.setDetectedMeeting(null);
-            debugLog('Meeting no longer detected — notification and session memory cleared');
+            debugLog('Meeting no longer detected — notification cleared and session reset');
           }
           if (this.lastDetectedId) {
             store.clearDismissedMeeting(this.lastDetectedId);
@@ -200,12 +200,12 @@ export class MeetingDetectionService {
         detectedAt: Date.now(),
       };
 
-      // Canonical session key normalizing platform and label variants
+      const platformKey = meeting.source.toLowerCase().trim();
       const cleanLabel = meeting.label
         .toLowerCase()
         .replace(/^(chat\s*\|\s*|meet\s*[-–:]\s*)/i, '')
         .replace(/[^a-z0-9]/g, '');
-      const sessionKey = `${meeting.source.toLowerCase()}:${cleanLabel}`;
+      const sessionKey = `${platformKey}:${cleanLabel}`;
 
       debugLog('Meeting detected', {
         platform: meeting.source,
@@ -224,21 +224,32 @@ export class MeetingDetectionService {
       }
 
       // ── Skip if already showing notification for this exact meeting ─────────
-      if (this.lastDetectedId === meeting.id && store.isMeetingNotificationVisible) {
+      if (store.isMeetingNotificationVisible) {
         debugLog('Notification already visible — no-op', { meetingId: meeting.id });
+        this.lastDetectedId = meeting.id;
         return;
       }
 
-      // ── Single-notification check per meeting session ──────────────────────
-      const lastNotifiedAt = this.lastNotifiedAtByMeetingId.get(meeting.id) || this.lastNotifiedAtByMeetingId.get(sessionKey);
+      // ── Strict single-notification per active call session ─────────────────
+      // Checks meeting ID, normalized sessionKey, and platform-level active lock
+      const lastNotifiedAt =
+        this.lastNotifiedAtByMeetingId.get(meeting.id) ||
+        this.lastNotifiedAtByMeetingId.get(sessionKey) ||
+        this.lastNotifiedAtByMeetingId.get(platformKey);
+
+      const isRecentlyNotified =
+        lastNotifiedAt && Date.now() - lastNotifiedAt < MeetingDetectionService.RENOTIFY_COOLDOWN_MS;
+
       if (
         this.notifiedMeetingIds.has(meeting.id) ||
         this.notifiedMeetingIds.has(sessionKey) ||
-        (lastNotifiedAt && Date.now() - lastNotifiedAt < MeetingDetectionService.RENOTIFY_COOLDOWN_MS)
+        this.notifiedMeetingIds.has(platformKey) ||
+        isRecentlyNotified
       ) {
-        debugLog('Notification suppressed — already notified for this meeting session', {
+        debugLog('Notification suppressed — already notified for this ongoing call session', {
           meetingId: meeting.id,
           sessionKey,
+          platformKey,
         });
         this.lastDetectedId = meeting.id;
         return;
@@ -251,11 +262,14 @@ export class MeetingDetectionService {
         meetingId: meeting.id,
       });
 
+      const now = Date.now();
       this.lastDetectedId = meeting.id;
       this.notifiedMeetingIds.add(meeting.id);
       this.notifiedMeetingIds.add(sessionKey);
-      this.lastNotifiedAtByMeetingId.set(meeting.id, Date.now());
-      this.lastNotifiedAtByMeetingId.set(sessionKey, Date.now());
+      this.notifiedMeetingIds.add(platformKey);
+      this.lastNotifiedAtByMeetingId.set(meeting.id, now);
+      this.lastNotifiedAtByMeetingId.set(sessionKey, now);
+      this.lastNotifiedAtByMeetingId.set(platformKey, now);
 
       store.setDetectedMeeting(meeting);
       store.setMeetingNotificationVisible(true);
