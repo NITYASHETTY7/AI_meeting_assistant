@@ -1,5 +1,5 @@
 /**
- * AI Meeting Assistant — High-Fidelity Interactive Script
+ * Noto — High-Fidelity Interactive Script
  * Engineered by Mirai Labs
  */
 
@@ -728,7 +728,7 @@ const PLATFORMS = {
     title: 'Google Meet · Active Call Detected',
     pulseColor: '#00ac47',
     toastTitle: 'Meeting Detected: Google Meet',
-    toastSub: 'AI Meeting Assistant auto-captures audio in background',
+    toastSub: 'Noto auto-captures audio in background',
     youText: '"Let\'s review the required timeline. We need the candidate scorecard finalized and the PDF summary exported before Friday."',
     speakerText: '"Understood. The custom templates editor allows us to update the 5-star evaluation rubric on the fly."',
     actionText: 'Auto Action Item: Export meeting intelligence summary to PDF & sync action items'
@@ -899,7 +899,7 @@ function initHeroEmailModal() {
   if (copyBtn) {
     copyBtn.addEventListener('click', async () => {
       try {
-        const text = `Subject: [Executive Summary] Meeting Intelligence & Action Items\n\nHi Team,\nHere is the automated executive summary and action items captured by AI Meeting Assistant:\n\nKey Outcomes:\n- Agreed on AWS Aurora Serverless v2 + ECS Fargate deployment topology.\n- Monthly infrastructure spend strictly capped at $8,000.\n- Candidate evaluation scorecard submitted with Strong Hire verdict.\n\nAssigned Action Items:\n- [You] Deliver formal SOW and credit allocation plan by Thursday.\n- [Team] Provision IAM cross-account staging credentials by Friday.`;
+        const text = `Subject: [Executive Summary] Meeting Intelligence & Action Items\n\nHi Team,\nHere is the automated executive summary and action items captured by Noto:\n\nKey Outcomes:\n- Agreed on AWS Aurora Serverless v2 + ECS Fargate deployment topology.\n- Monthly infrastructure spend strictly capped at $8,000.\n- Candidate evaluation scorecard submitted with Strong Hire verdict.\n\nAssigned Action Items:\n- [You] Deliver formal SOW and credit allocation plan by Thursday.\n- [Team] Provision IAM cross-account staging credentials by Friday.`;
         await navigator.clipboard.writeText(text);
         if (statusMsg) {
           statusMsg.innerText = '✓ Copied draft to clipboard!';
