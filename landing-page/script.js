@@ -168,8 +168,8 @@ function initHeroWaveform() {
         speakerLabel.innerHTML = `<span class="speaker-dot"></span> Active: <strong class="you-text">You (Microphone)</strong>`;
         bars.forEach(b => b.style.background = 'linear-gradient(180deg, var(--accent-cyan), var(--accent-blue))');
       } else {
-        speakerLabel.innerHTML = `<span class="speaker-dot" style="background:var(--accent-indigo);box-shadow:0 0 6px var(--accent-indigo)"></span> Active: <strong class="speaker-text">Speaker (System Audio)</strong>`;
-        bars.forEach(b => b.style.background = 'linear-gradient(180deg, var(--accent-indigo), #818cf8)');
+        speakerLabel.innerHTML = `<span class="speaker-dot" style="background:#a855f7;box-shadow:0 0 8px #a855f7"></span> Active: <strong class="speaker-text">Speaker (System Audio)</strong>`;
+        bars.forEach(b => b.style.background = 'linear-gradient(180deg, #a855f7, #c084fc)');
       }
     }
 
@@ -512,14 +512,57 @@ const EXP_PANELS = {
 
   notes: `
     <div class="notes-sandbox">
-      <div class="notes-mock-toolbar">
-        <span><strong>[B]</strong> Bold</span> · <span><em>[I]</em> Italic</span> · <span>[•] Bullet list</span> · <span>[A±] Font size</span>
+      <div class="notes-editor-header">
+        <div class="notes-doc-title">
+          <span>📝</span>
+          <span>Engineering Architecture &amp; SOW Decisions</span>
+        </div>
+        <div class="notes-doc-meta mono">
+          <span class="notes-sync-chip">⚡ SQLite Vault</span>
+          <span>420 words</span>
+          <span>Edited just now</span>
+        </div>
       </div>
-      <div class="notes-mock-body">
-• Client is prioritizing zero downtime for the PostgreSQL database migration.
-• Use the 5-Star candidate scorecard template for all backend interview loops.
-• Architecture SOW must be signed before provisioning the AWS staging environment.
-• Verified all meeting notes stay 100% stored in local SQLite without external cloud sync.
+
+      <div class="notes-mock-toolbar">
+        <button class="tb-btn active"><strong>B</strong> Bold</button>
+        <button class="tb-btn"><em>I</em> Italic</button>
+        <button class="tb-btn"><u>U</u> Underline</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn">H1</button>
+        <button class="tb-btn">H2</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn">🔘 Bullet List</button>
+        <button class="tb-btn active">☑ Checklist</button>
+        <button class="tb-btn">💡 Callout</button>
+      </div>
+
+      <div class="notes-editor-body">
+        <div class="note-callout-card">
+          <span class="note-callout-icon">💡</span>
+          <div class="note-callout-text">
+            <strong>Key Architecture Mandate:</strong> Zero downtime PostgreSQL migration to AWS Aurora Serverless v2. All meeting intelligence &amp; embeddings stay 100% private in workstation SQLite storage.
+          </div>
+        </div>
+
+        <div class="notes-checklist-block" id="notesChecklist">
+          <div class="note-check-item done" onclick="this.classList.toggle('done')">
+            <div class="note-check-box">✓</div>
+            <span>Use 5-Star candidate scorecard template for all backend interview loops</span>
+          </div>
+          <div class="note-check-item done" onclick="this.classList.toggle('done')">
+            <div class="note-check-box">✓</div>
+            <span>Lock monthly cloud infrastructure budget cap strictly at $8,000</span>
+          </div>
+          <div class="note-check-item" onclick="this.classList.toggle('done')">
+            <div class="note-check-box">✓</div>
+            <span>Deliver formal SOW and credit allocation schedule by Thursday</span>
+          </div>
+          <div class="note-check-item" onclick="this.classList.toggle('done')">
+            <div class="note-check-box">✓</div>
+            <span>Export executive summary to PDF and dispatch 1-click update email</span>
+          </div>
+        </div>
       </div>
     </div>
   `,
