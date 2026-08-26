@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#05070f">
+  <title>AI Meeting Assistant — Engineered by Mirai Labs</title>
+  <meta name="description" content="The local-first AI meeting assistant that works across every meeting: Google Meet, Zoom, Teams, Slack Huddles, and In-Person conversations. Built by Mirai Labs.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  
+  <!-- Google Fonts: Manrope & DM Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Animated Background Canvas & Glow Orbs -->
+  <canvas id="neuralCanvas" class="neural-canvas"></canvas>
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+  <div class="glow-orb orb-3"></div>
+  <div class="cursor-glow" id="cursorGlow"></div>
+
+  <!-- ══════════ 1 · NAVBAR ══════════ -->
+  <header class="navbar" id="navbar">
+    <div class="nav-container">
+      <a href="#top" class="nav-brand">
+        <div class="brand-logo-wrap">
+          <svg viewBox="0 0 512 512" fill="none">
+            <rect width="512" height="512" rx="116" fill="url(#brand-nav-grad)"/>
+            <path d="M 164 132 H 348 C 379 132 404 157 404 188 V 276 C 404 307 379 332 348 332 H 204 L 132 390 L 140 332 H 164 C 133 332 108 307 108 276 V 188 C 108 157 133 132 164 132 Z" fill="rgba(255, 255, 255, 0.08)" stroke="#FFFFFF" stroke-width="28" stroke-linejoin="round"/>
+            <line x1="182" y1="232" x2="182" y2="276" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+            <line x1="232" y1="184" x2="232" y2="284" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+            <line x1="282" y1="208" x2="282" y2="276" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+            <line x1="330" y1="184" x2="330" y2="284" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="brand-nav-grad" x1="40" y1="40" x2="472" y2="472" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#2898EB"/>
+                <stop offset="100%" stop-color="#146CB8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div class="nav-brand-text">
+          <span class="nav-brand-name">AI Meeting Assistant</span>
+          <span class="nav-brand-sub">by Mirai Labs</span>
+        </div>
+      </a>
+
+      <nav class="nav-menu">
+        <a href="#templates" class="nav-link">Template Library</a>
+        <a href="#live-experience" class="nav-link">Live AI Chat &amp; Audio</a>
+        <a href="#features" class="nav-link">Architecture</a>
+        <a href="#faq" class="nav-link">FAQ</a>
+      </nav>
+
+      <div class="nav-right">
+        <a href="https://mirai-granola-releases.s3.ap-south-1.amazonaws.com/Mirai+Granola-Setup-1.0.0.exe" class="btn-nav-download" download id="navDownloadBtn">
+          <div class="btn-nav-shimmer"></div>
+          <svg class="btn-nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span class="btn-text-default">Download</span>
+          <span class="btn-text-hover">Download for Windows (.exe)</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ══════════ 2 · HERO SECTION ══════════ -->
+    <section class="hero">
+      <div class="hero-content">
+        
+        <div class="badge-pill animated-pulse-badge">
+          <span class="badge-dot"></span>
+          <span class="mono">Mirai Labs Studio · Windows 10/11 v1.0.0 Release</span>
+        </div>
+
+        <h1 class="hero-headline">
+          Speak freely.<br>
+          <span class="gradient-text">Intelligence follows.</span>
+        </h1>
+
+        <p class="hero-subhead">
+          Engineered to auto-detect and capture <strong>every meeting</strong> across Google Meet, Zoom, Microsoft Teams, Slack Huddles, and In-Person discussions — with sub-second Whisper transcription, clean <strong>You vs Speaker</strong> diarization, and live AI chat.
+        </p>
+
+        <div class="hero-meta-strip mono">
+          <div class="h-meta-item"><span class="meta-icon">⚡</span> Decoupled Whisper STT</div>
+          <div class="h-meta-item"><span class="meta-icon">🛡️</span> 100% Local SQLite Vault</div>
+          <div class="h-meta-item"><span class="meta-icon">🔔</span> Background Tray Daemon</div>
+        </div>
+
+      </div>
+
+      <!-- Universal Meeting Selector Strip -->
+      <div class="hero-showcase">
+        
+        <!-- Platform Switcher Chips -->
+        <div class="platform-switcher-bar">
+          <span class="ps-label mono">WORKS ACROSS EVERY CALL:</span>
+          <div class="ps-chips" id="platformChips">
+            <button class="ps-chip active" data-platform="meet">
+              <span class="ps-dot meet"></span> Google Meet
+            </button>
+            <button class="ps-chip" data-platform="zoom">
+              <span class="ps-dot zoom"></span> Zoom Video
+            </button>
+            <button class="ps-chip" data-platform="teams">
+              <span class="ps-dot teams"></span> MS Teams
+            </button>
+            <button class="ps-chip" data-platform="slack">
+              <span class="ps-dot slack"></span> Slack Huddle
+            </button>
+            <button class="ps-chip" data-platform="offline">
+              <span class="ps-dot offline"></span> In-Person / Mic
+            </button>
+          </div>
+        </div>
+
+        <!-- Floating App Showcase Window with Live Interactivity -->
+        <div class="showcase-card tilt-card" id="heroCard">
+          
+          <!-- Mockup Header -->
+          <div class="showcase-header">
+            <div class="window-controls">
+              <span class="wc-dot red"></span>
+              <span class="wc-dot yellow"></span>
+              <span class="wc-dot green"></span>
+            </div>
+            <div class="meeting-status" id="meetingStatusBadge">
+              <span class="status-pulse" id="statusPulseDot"></span>
+              <span class="mono status-title" id="meetingStatusTitle">Google Meet · Active Call Detected</span>
+            </div>
+            <div class="meeting-timer mono" id="heroTimer">00:19:42</div>
+          </div>
+
+          <!-- Mockup Body -->
+          <div class="showcase-body">
+            
+            <!-- Live Waveform & Audio Spectrum -->
+            <div class="live-wave-banner">
+              <div class="wave-left-meta">
+                <span class="wave-tag mono">LIVE AUDIO SPECTRUM</span>
+                <span class="wave-speaker mono" id="heroActiveSpeaker">
+                  <span class="speaker-dot"></span>
+                  Active: <strong class="you-text">You (Microphone)</strong>
+                </span>
+              </div>
+              
+              <div class="wave-visual-bars" id="heroSoundwave">
+                <!-- Injected via JS -->
+              </div>
+            </div>
+
+            <!-- Dialogue Stream (Clean You vs Speaker) -->
+            <div class="dialogue-container" id="dialogueStreamContainer">
+              <div class="dialogue-row you">
+                <div class="speaker-badge mono">You</div>
+                <div class="dialogue-bubble" id="dialogueYou">
+                  "Let's review the required timeline. We need the candidate scorecard finalized and the PDF summary exported before Friday."
+                </div>
+              </div>
+
+              <div class="dialogue-row speaker">
+                <div class="speaker-badge mono">Speaker</div>
+                <div class="dialogue-bubble" id="dialogueSpeaker">
+                  "Understood. The custom templates editor allows us to update the 5-star evaluation rubric on the fly."
+                </div>
+              </div>
+            </div>
+
+            <!-- Live Action Item Extracted Toast -->
+            <div class="showcase-footer-bar">
+              <div class="action-item-pill" id="heroActionPill">
+                <span class="check-icon">✓</span>
+                <span id="heroActionText">Auto Action Item: Export meeting intelligence summary to PDF &amp; sync action items</span>
+              </div>
+              <button class="ai-chip email-chip mono" id="heroEmailTriggerBtn" title="Click to view automated email draft">
+                <span class="chip-spark">✉️</span> Send Email
+              </button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Interactive Email Draft Modal Popup -->
+        <div class="email-modal-overlay" id="emailModalOverlay">
+          <div class="email-modal-card">
+            <div class="email-modal-header">
+              <div class="em-title-box">
+                <span class="em-icon">✉️</span>
+                <span class="em-title">Automated Executive Email Draft</span>
+              </div>
+              <button class="em-close-btn" id="emailModalCloseBtn">✕</button>
+            </div>
+            
+            <div class="email-modal-body">
+              <div class="em-meta-row">
+                <span class="mono em-lbl">To:</span>
+                <span class="em-val">stakeholders@company.com, leadership@mirailabs.tech</span>
+              </div>
+              <div class="em-meta-row">
+                <span class="mono em-lbl">Subject:</span>
+                <strong class="em-val" id="emailModalSubject">[Executive Summary] Meeting Intelligence &amp; Action Items</strong>
+              </div>
+
+              <div class="em-content-box">
+                <p>Hi Team,</p>
+                <p>Here is the automated executive summary and action items captured by AI Meeting Assistant:</p>
+                
+                <div class="em-highlight-box">
+                  <strong>Key Outcomes:</strong>
+                  <ul>
+                    <li>Agreed on AWS Aurora Serverless v2 + ECS Fargate deployment topology.</li>
+                    <li>Monthly infrastructure spend strictly capped at $8,000.</li>
+                    <li>Candidate evaluation scorecard submitted with Strong Hire verdict.</li>
+                  </ul>
+                </div>
+
+                <div class="em-actions-box">
+                  <strong>Assigned Action Items:</strong>
+                  <ul>
+                    <li>☑ [You] Deliver formal SOW and credit allocation plan by Thursday.</li>
+                    <li>☑ [Team] Provision IAM cross-account staging credentials by Friday.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="email-modal-footer">
+              <button class="em-btn-send" id="emailModalSendBtn">🚀 Send Email</button>
+              <button class="em-btn-copy" id="emailModalCopyBtn">📋 Copy Draft</button>
+              <span class="mono em-status" id="emailModalStatusMsg"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulated Floating Notification -->
+        <div class="floating-toast-alert" id="trayToast">
+          <div class="toast-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="toast-content">
+            <div class="toast-title" id="toastTitle">Meeting Detected: Google Meet</div>
+            <div class="toast-sub">AI Meeting Assistant auto-captures audio in background</div>
+          </div>
+          <span class="toast-close">×</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════ 3 · CAPABILITIES MARQUEE ══════════ -->
+    <section class="ticker">
+      <div class="ticker-inner">
+        <span>Google Meet &amp; Zoom</span><i>✳</i>
+        <span>MS Teams &amp; Slack Huddles</span><i>✳</i>
+        <span>Offline &amp; In-Person Meetings</span><i>✳</i>
+        <span>Decoupled Whisper STT</span><i>✳</i>
+        <span>You vs Speaker Diarization</span><i>✳</i>
+        <span>Candidate Scorecards (5★)</span><i>✳</i>
+        <span>Client Discovery &amp; Scope</span><i>✳</i>
+        <span>HR Strategy &amp; 1:1</span><i>✳</i>
+        <span>Custom Templates CRUD</span><i>✳</i>
+        <span>Interactive Live AI Chat</span><i>✳</i>
+        <span>Rich Additional Notes</span><i>✳</i>
+        <span>Automatic Action Items</span><i>✳</i>
+        <span>One-Click PDF Export</span><i>✳</i>
+        <span>100% Local SQLite Vault</span><i>✳</i>
+        <span>Background Tray Detection</span><i>✳</i>
+      </div>
+    </section>
+
+    <!-- ══════════ 4 · TEMPLATE LIBRARY SHOWCASE (REAL EXAMPLES) ══════════ -->
+    <section class="section templates-section" id="templates">
+      <div class="section-container">
+        
+        <div class="section-intro">
+          <div class="section-tag mono">01 / TEMPLATE SUITE</div>
+          <h2 class="section-title">Pre-built intelligence for every meeting.</h2>
+          <p class="section-desc">Switch between specialized templates or build your own custom rubrics with full CRUD management.</p>
+        </div>
+
+        <!-- Template Selector Buttons -->
+        <div class="templates-nav" id="templateTabs">
+          <button class="template-tab-btn active" data-tmpl="candidate">
+            <span class="t-icon">⭐</span>
+            <div class="t-text">
+              <strong>Candidate Scorecard</strong>
+              <span class="mono">5-Star Rubric &amp; Hiring Verdict</span>
+            </div>
+          </button>
+          
+          <button class="template-tab-btn" data-tmpl="discovery">
+            <span class="t-icon">💼</span>
+            <div class="t-text">
+              <strong>Client Discovery &amp; Scope</strong>
+              <span class="mono">Requirements, Budget &amp; SOW</span>
+            </div>
+          </button>
+
+          <button class="template-tab-btn" data-tmpl="hr">
+            <span class="t-icon">🌱</span>
+            <div class="t-text">
+              <strong>HR Strategy &amp; 1:1 Sync</strong>
+              <span class="mono">Blockers, Morale &amp; Growth Milestones</span>
+            </div>
+          </button>
+
+          <button class="template-tab-btn" data-tmpl="standup">
+            <span class="t-icon">⚡</span>
+            <div class="t-text">
+              <strong>Team Standup &amp; Recap</strong>
+              <span class="mono">Done, Blocked &amp; Sprint Goals</span>
+            </div>
+          </button>
+
+          <button class="template-tab-btn" data-tmpl="custom">
+            <span class="t-icon">🛠️</span>
+            <div class="t-text">
+              <strong>Custom Template CRUD</strong>
+              <span class="mono">User-Defined Prompts &amp; Schema</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- Template Live Preview Frame -->
+        <div class="template-preview-card" id="templatePreviewBox">
+          <!-- Dynamic Content Injected via JavaScript -->
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ══════════ 5 · LIVE EXPERIENCE (AI CHAT, NOTES & ACTION ITEMS) ══════════ -->
+    <section class="section experience-section" id="live-experience">
+      <div class="section-container">
+        
+        <div class="section-intro">
+          <div class="section-tag mono">02 / INTERACTIVE PLAYGROUND</div>
+          <h2 class="section-title">Experience real-time intelligence.</h2>
+          <p class="section-desc">Try live AI questions, dual-track diarization, manual rich note editing, and automatic action items extraction in the interactive sandbox below.</p>
+        </div>
+
+        <div class="experience-card">
+          <!-- View Switcher Tabs -->
+          <div class="exp-nav">
+            <button class="exp-tab-btn active" data-exp="aichat">
+              <span>💬 Live AI Chat Simulation</span>
+            </button>
+            <button class="exp-tab-btn" data-exp="diarization">
+              <span>🎙️ Dual-Track Audio Stream</span>
+            </button>
+            <button class="exp-tab-btn" data-exp="notes">
+              <span>📝 Rich Additional Notes</span>
+            </button>
+            <button class="exp-tab-btn" data-exp="actions">
+              <span>☑️ Automatic Action Items</span>
+            </button>
+          </div>
+
+          <!-- Experience Content Body -->
+          <div class="exp-body" id="expBody">
+            <!-- Dynamic Content Injected via JavaScript -->
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ══════════ 6 · FOUR CORE ARCHITECTURE PILLARS ══════════ -->
+    <section class="section" id="features">
+      <div class="section-container">
+        
+        <div class="section-intro">
+          <div class="section-tag mono">03 / ARCHITECTURE</div>
+          <h2 class="section-title">Universal meeting intelligence.</h2>
+          <p class="section-desc">Built with native Windows WASAPI loopback, Electron 43, React 19, SQLite, and decoupled Whisper inference.</p>
+        </div>
+
+        <div class="feature-grid">
+          
+          <div class="feature-card tilt-card">
+            <div class="feature-icon-box">🔍</div>
+            <h3>Universal Meeting Auto-Detection</h3>
+            <p>Runs quietly in the Windows system tray. It continuously monitors for active calls across <strong>Google Meet</strong>, <strong>Zoom</strong>, <strong>Microsoft Teams</strong>, <strong>Slack Huddles</strong>, and <strong>offline/in-person meetings</strong>, prompting you with zero setup.</p>
+            <div class="feature-tag-strip mono">
+              <span>Google Meet</span> · <span>Zoom</span> · <span>Teams</span> · <span>Slack</span> · <span>In-Person</span>
+            </div>
+          </div>
+
+          <div class="feature-card tilt-card">
+            <div class="feature-icon-box">⚡</div>
+            <h3>Decoupled Whisper STT Engine</h3>
+            <p>Isolates high-speed Whisper audio transcription from downstream synthesis, unlocking sub-second responsiveness without thermal throttling or dropped frames.</p>
+            <div class="feature-tag-strip mono">
+              <span>~240ms Latency</span> · <span>WASAPI Loopback</span>
+            </div>
+          </div>
+
+          <div class="feature-card tilt-card">
+            <div class="feature-icon-box">📋</div>
+            <h3>Custom Templates &amp; Rubrics CRUD</h3>
+            <p>Create, edit, and delete custom meeting templates and evaluation rubrics. Adapt note generation to engineering post-mortems, customer discovery, or hiring scorecards.</p>
+            <div class="feature-tag-strip mono">
+              <span>Full CRUD</span> · <span>Instant Schema Sync</span>
+            </div>
+          </div>
+
+          <div class="feature-card tilt-card">
+            <div class="feature-icon-box">🛡️</div>
+            <h3>Local SQLite Vault &amp; PDF Export</h3>
+            <p>100% private SQLite storage with an internal Recycle Bin for instant restoration or permanent purge. Generate executive-ready formatted PDF summaries in one click.</p>
+            <div class="feature-tag-strip mono">
+              <span>Zero Cloud Notes</span> · <span>1-Click PDF</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ══════════ 7 · FREQUENTLY ASKED QUESTIONS ══════════ -->
+    <section class="section faq-section" id="faq">
+      <div class="section-container">
+        
+        <div class="section-intro">
+          <div class="section-tag mono">04 / FAQ</div>
+          <h2 class="section-title">Frequently Asked Questions</h2>
+        </div>
+
+        <div class="faq-list">
+          
+          <div class="faq-item">
+            <button class="faq-trigger">
+              <span>Does this work with every meeting platform?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-answer">
+              <p>Yes! The assistant auto-detects <strong>Google Meet</strong>, <strong>Zoom</strong>, <strong>Microsoft Teams</strong>, and <strong>Slack Huddles</strong>. It also supports any browser call (Webex, Discord) as well as offline/in-person meetings via your workstation microphone.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-trigger">
+              <span>How does You vs Speaker diarization work?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-answer">
+              <p>The application captures your microphone hardware as <strong>"You"</strong> and system audio (the other meeting attendees) via native Windows WASAPI loopback as <strong>"Speaker"</strong>. This guarantees 100% reliable two-way diarization without needing cloud voice-printing or extra drivers.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-trigger">
+              <span>Where are my transcripts, recordings, and notes stored?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-answer">
+              <p>Everything is saved locally on your workstation in an encrypted SQLite database managed by Drizzle ORM. Your notes and transcripts are never uploaded to any third-party storage server.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-trigger">
+              <span>Can I create and edit custom templates?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-answer">
+              <p>Yes! The app features a built-in Custom Template editor. You can create custom prompts, structure the desired note fields (e.g. key takeaways, next steps, evaluation criteria), and update or delete them whenever you want.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-trigger">
+              <span>How does the background detection work when the app is closed?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-answer">
+              <p>When you close the main application window, it minimizes into your Windows System Tray. It periodically checks active window handles for conferencing software and triggers a native Windows Action Center notification when a meeting begins.</p>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════ 8 · FOOTER ══════════ -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-left">
+        <div class="brand-logo-wrap small">
+          <svg viewBox="0 0 512 512" fill="none">
+            <rect width="512" height="512" rx="116" fill="url(#brand-ft-grad)"/>
+            <path d="M 164 132 H 348 C 379 132 404 157 404 188 V 276 C 404 307 379 332 348 332 H 204 L 132 390 L 140 332 H 164 C 133 332 108 307 108 276 V 188 C 108 157 133 132 164 132 Z" fill="rgba(255, 255, 255, 0.08)" stroke="#FFFFFF" stroke-width="28" stroke-linejoin="round"/>
+            <defs>
+              <linearGradient id="brand-ft-grad" x1="40" y1="40" x2="472" y2="472" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#2898EB"/>
+                <stop offset="100%" stop-color="#146CB8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <span class="footer-logo-text">AI Meeting Assistant</span>
+        <span class="footer-credit">Engineered by <a href="https://mirailabs.tech" target="_blank" rel="noopener noreferrer" class="mirai-link">Mirai Labs ↗</a></span>
+      </div>
+
+      <div class="footer-right mono">
+        <span>© 2026 Mirai Labs</span> · <span>Windows 10/11 x64</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
