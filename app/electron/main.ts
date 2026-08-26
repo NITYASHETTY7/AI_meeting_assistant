@@ -19,6 +19,7 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 // Set official app name and Windows AppUserModelID matching package.json appId
 // so OS notifications display "Mirai Granola" instead of "electron" in Windows Action Center.
 app.name = 'Mirai Granola'
+app.setName('Mirai Granola')
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.miraigranola.app')
 }
@@ -45,8 +46,20 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 
-function getAppIconPath(): string | undefined {
-  return getAppPngPath()
+function getAppIcoPath(): string | undefined {
+  const possiblePaths = [
+    join(process.resourcesPath, 'icon.ico'),
+    join(app.getAppPath(), 'public', 'icon.ico'),
+    join(process.cwd(), 'public', 'icon.ico'),
+    join(import.meta.dirname, '..', 'public', 'icon.ico'),
+    join(import.meta.dirname, '..', 'dist', 'icon.ico'),
+  ]
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) return p
+    } catch {}
+  }
+  return undefined
 }
 
 function getAppPngPath(): string | undefined {
@@ -58,35 +71,35 @@ function getAppPngPath(): string | undefined {
     join(process.cwd(), 'dist', 'app-icon-256.png'),
     join(import.meta.dirname, '..', 'public', 'app-icon-256.png'),
     join(import.meta.dirname, '..', 'dist', 'app-icon-256.png'),
-    join(process.resourcesPath, 'icon.ico'),
-    join(app.getAppPath(), 'public', 'icon.ico'),
-    join(process.cwd(), 'public', 'icon.ico'),
-    join(import.meta.dirname, '..', 'public', 'icon.ico'),
-  ];
+  ]
 
   for (const p of possiblePaths) {
     try {
-      if (fs.existsSync(p)) return p;
+      if (fs.existsSync(p)) return p
     } catch {
       // ignore
     }
   }
-  return undefined;
+  return undefined
+}
+
+function getAppIconPath(): string | undefined {
+  return process.platform === 'win32' ? (getAppIcoPath() || getAppPngPath()) : getAppPngPath()
 }
 
 function getAppIcon(sizePx?: number): Electron.NativeImage | undefined {
   try {
-    const p = getAppPngPath();
+    const p = getAppPngPath() || getAppIcoPath()
     if (p) {
-      const img = nativeImage.createFromPath(p);
+      const img = nativeImage.createFromPath(p)
       if (!img.isEmpty()) {
-        return sizePx ? img.resize({ width: sizePx, height: sizePx, quality: 'best' }) : img;
+        return sizePx ? img.resize({ width: sizePx, height: sizePx, quality: 'best' }) : img
       }
     }
   } catch (err) {
-    console.warn('[main] Failed to load icon:', err);
+    console.warn('[main] Failed to load icon:', err)
   }
-  return undefined;
+  return undefined
 }
 
 async function createTray() {
@@ -146,13 +159,14 @@ async function createTray() {
 let hasShownCloseNotice = false
 
 function createWindow() {
-  const iconPath = getAppPngPath()
-  const appIcon = getAppIcon(256) || (iconPath ? nativeImage.createFromPath(iconPath) : undefined)
+  const icoPath = getAppIcoPath()
+  const pngPath = getAppPngPath()
+  const appIcon = getAppIcon(256) || (pngPath ? nativeImage.createFromPath(pngPath) : undefined)
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Mirai Granola',
-    icon: appIcon || iconPath,
+    icon: (process.platform === 'win32' && icoPath) ? icoPath : (appIcon || pngPath),
     webPreferences: {
       preload: join(import.meta.dirname, 'preload.js'),
       nodeIntegration: false,
@@ -286,8 +300,15 @@ app.whenReady().then(() => {
       if (!fs.existsSync(shortcutDir)) {
         fs.mkdirSync(shortcutDir, { recursive: true })
       }
+
+      // Remove any legacy "Electron.lnk" shortcut from past dev/runs so Windows Search doesn't index it
+      const staleShortcut = join(shortcutDir, 'Electron.lnk')
+      if (fs.existsSync(staleShortcut)) {
+        try { fs.unlinkSync(staleShortcut) } catch {}
+      }
+
       const shortcutPath = join(shortcutDir, 'Mirai Granola.lnk')
-      const iconPath = getAppIconPath()
+      const iconPath = getAppIcoPath() || getAppPngPath()
       const shortcutOptions: Electron.ShortcutDetails = {
         target: process.execPath,
         args: isDev ? `"${app.getAppPath()}"` : '',

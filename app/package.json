@@ -86,11 +86,11 @@
         }
       ],
       "icon": "public/icon.ico",
-      "executableName": "Mirai-Granola",
-      "signAndEditExecutable": false
+      "executableName": "Mirai-Granola"
     },
     "forceCodeSigning": false,
     "nsis": {
+      "shortcutName": "Mirai Granola",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
