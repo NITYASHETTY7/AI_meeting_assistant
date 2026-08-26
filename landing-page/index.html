@@ -13,6 +13,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
+  <script>
+    if (!window.location.pathname.endsWith('/') && !window.location.pathname.endsWith('.html')) {
+      window.location.replace(window.location.pathname + '/' + window.location.search + window.location.hash);
+    }
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
