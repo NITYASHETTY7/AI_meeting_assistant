@@ -1,6 +1,6 @@
-# Mirai Granola
+# AI Meeting Assistant
 
-An AI-powered desktop meeting assistant for Windows, macOS, and Linux. Mirai Granola automatically detects when you join a meeting, records and transcribes the conversation, and turns it into a clean summary with action items — all stored locally on your machine.
+An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meeting Assistant automatically detects when you join a meeting, records and transcribes the conversation, and turns it into a clean summary with action items — all stored locally on your machine.
 
 ## What it does
 
@@ -11,7 +11,7 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. Mirai Gra
 - **AI chat** — Ask questions about a specific meeting's transcript, or have a general conversation, using the same AI provider you've connected.
 - **Live translation** — Translate any individual transcript line into one of several languages on demand.
 - **Bring-your-own-key** — No bundled AI service or cloud account. You connect your own API key for OpenAI, Groq, Anthropic, Gemini, AWS Bedrock, Azure OpenAI, AssemblyAI, Deepgram, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Keys are stored in your OS credential manager (Windows Credential Manager / macOS Keychain / Linux libsecret), never in plain text, and never sent anywhere except directly to the provider you chose.
-- **Automatic fallback transcription** — If your primary provider's transcription call fails (expired key, rate limit, network blip), Mirai Granola automatically retries through Deepgram if you've configured a key for it.
+- **Automatic fallback transcription** — If your primary provider's transcription call fails (expired key, rate limit, network blip), AI Meeting Assistant automatically retries through Deepgram if you've configured a key for it.
 - **Fully local storage** — Meetings, transcripts, notes, action items, and chat history are stored in a local SQLite database on your device. There is no cloud sync and no account system.
 - **Audio retention controls** — Configure how long recorded audio is kept (7/30/90 days or forever), see real storage usage, and clear all recordings with one click.
 - **Customizable** — Theme (light/dark/system), notification preferences, transcription language, and quick provider switching, all from Settings.
@@ -56,4 +56,4 @@ Neither is included in this repository — they contain your personal meeting da
 
 ## Privacy
 
-Mirai Granola does not operate any backend server, does not collect analytics, and does not transmit your data anywhere except directly to the AI provider you configure with your own API key. Your meeting audio, transcripts, and notes stay on your device.
+AI Meeting Assistant does not operate any backend server, does not collect analytics, and does not transmit your data anywhere except directly to the AI provider you configure with your own API key. Your meeting audio, transcripts, and notes stay on your device.
