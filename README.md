@@ -25,19 +25,18 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meetin
 - pnpm
 
 ## 🏗️ System Architecture
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                         AI MEETING ASSISTANT                                 │
-│                         Desktop Application                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                         AI MEETING ASSISTANT                                 │
+    │                         Desktop Application                                  │
+    └──────────────────────────────────────────────────────────────────────────────┘
                                       │
                     ┌─────────────────┴─────────────────┐
                     │                                   │
                     ▼                                   ▼
           ┌───────────────────┐               ┌───────────────────┐
-          │   React Renderer  │    Inter      │  Electron Main    │
-          │                   │    Process    │     Process       │
-          │ • Dashboard       │ Communication │                   │
+          │   React Renderer  │               │  Electron Main    │
+          │                   │               │     Process       │
+          │ • Dashboard       │               │                   │
           │ • Meeting UI      │◄───── IPC ───►│ • OS APIs         │
           │ • Live Transcript │               │ • Audio Capture   │
           │ • AI Chat         │               │ • Meeting Detect. │
