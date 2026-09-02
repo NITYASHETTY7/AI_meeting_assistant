@@ -24,6 +24,51 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meetin
 - Better SQLite3 + Drizzle ORM (local database)
 - pnpm
 
+## 🏗️ System Architecture
+
+                    AI MEETING ASSISTANT
+                            │
+             ┌──────────────┴──────────────┐
+             │                             │
+      Meeting Detection               Audio Capture
+             │                             │
+       Every ~5 seconds              Microphone
+             │                       + System Audio
+       Window Detection                    │
+             │                             ▼
+             │                       Audio Chunks
+             │                             │
+             │                             ▼
+             │                         RMS / VAD
+             │                             │
+             │                      Speech detected
+             │                             │
+             │                             ▼
+             │                       Audio Buffer
+             │                             │
+             │                    Pause / Silence
+             │                             │
+             │                    Pause detected
+             │                             │
+             │                             ▼
+             │                         Whisper
+             │                             │
+             │                             ▼
+             │                        Transcript
+             │                             │
+             └──────────────┬──────────────┘
+                            ▼
+                     Meeting Workspace
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+           Summary      Action Items    AI Insights
+              │             │             │
+              └─────────────┼─────────────┘
+                            ▼
+                       SQLite Database
+
+
 ## Directory structure
 
 - `app/` — the Electron + React + TypeScript application. All development happens here.
