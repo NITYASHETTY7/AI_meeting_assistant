@@ -26,48 +26,216 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meetin
 
 ## 🏗️ System Architecture
 
-                    AI MEETING ASSISTANT
-                            │
-             ┌──────────────┴──────────────┐
-             │                             │
-      Meeting Detection               Audio Capture
-             │                             │
-       Every ~5 seconds              Microphone
-             │                       + System Audio
-       Window Detection                    │
-             │                             ▼
-             │                       Audio Chunks
-             │                             │
-             │                             ▼
-             │                         RMS / VAD
-             │                             │
-             │                      Speech detected
-             │                             │
-             │                             ▼
-             │                       Audio Buffer
-             │                             │
-             │                    Pause / Silence
-             │                             │
-             │                    Pause detected
-             │                             │
-             │                             ▼
-             │                         Whisper
-             │                             │
-             │                             ▼
-             │                        Transcript
-             │                             │
-             └──────────────┬──────────────┘
-                            ▼
-                     Meeting Workspace
-                            │
-              ┌─────────────┼─────────────┐
-              ▼             ▼             ▼
-           Summary      Action Items    AI Insights
-              │             │             │
-              └─────────────┼─────────────┘
-                            ▼
-                       SQLite Database
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         AI MEETING ASSISTANT                                 │
+│                         Desktop Application                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                    ┌─────────────────┴─────────────────┐
+                    │                                   │
+                    ▼                                   ▼
+          ┌───────────────────┐               ┌───────────────────┐
+          │   React Renderer  │    Inter      │  Electron Main    │
+          │                   │    Process    │     Process       │
+          │ • Dashboard       │ Communication │                   │
+          │ • Meeting UI      │◄───── IPC ───►│ • OS APIs         │
+          │ • Live Transcript │               │ • Audio Capture   │
+          │ • AI Chat         │               │ • Meeting Detect. │
+          │ • Settings        │               │ • Database        │
+          │ • Meeting History │               │ • Credentials     │
+          └─────────┬─────────┘               └─────────┬─────────┘
+                    │                                   │
+                    ▼                                   ▼
+          ┌───────────────────┐               ┌───────────────────┐
+          │  Zustand Store    │               │ Meeting Detection │
+          │                   │               │                   │
+          │ • Meeting State   │               │ Every ~5 seconds  │
+          │ • Recording State │               │ • PowerShell      │
+          │ • Transcript      │               │ • OS Window       │
+          │ • AI Provider     │               │ • Title Matching  │
+          │ • UI State        │               └─────────┬─────────┘
+          └─────────┬─────────┘                         │
+                    │                                   ▼
+                    │                          ┌───────────────────┐
+                    │                          │ Meeting Detected  │
+                    │                          └─────────┬─────────┘
+                    │                                    │
+                    │                                    ▼
+                    │                          ┌───────────────────┐
+                    │                          │ OS Notification   │
+                    │                          └───────────────────┘
+                    │
+                    │
+                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           AUDIO PIPELINE                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
 
+       ┌─────────────────────┐             ┌─────────────────────┐
+       │  Microphone Input   │             │    System Audio     │
+       │      (User)         │             │  WASAPI Loopback    │
+       └──────────┬──────────┘             └──────────┬──────────┘
+                  │                                   │
+                  ▼                                   ▼
+       ┌─────────────────────┐             ┌─────────────────────┐
+       │   Audio Capture     │             │   Audio Capture     │
+       └──────────┬──────────┘             └──────────┬──────────┘
+                  │                                   │
+                  └─────────────────┬─────────────────┘
+                                    ▼
+                         ┌────────────────────────────────────────-
+                         │  PCM(Pulse Code Modulation) Audio      │
+                         │    16 kHz / Mono                       │
+                         └──────────┬─────────────────────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   Audio Chunks       │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │  RMS / VAD Check     │
+                         └──────────┬───────────┘
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                         ▼                     ▼
+                   ┌───────────┐        ┌───────────────┐
+                   │  Silence  │        │    Speech     │
+                   └─────┬─────┘        └───────┬───────┘
+                         │                      │
+                         ▼                      ▼
+                    Ignore /              Audio Buffer
+                       Wait                    │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │ ~300 ms Pre-Roll   │
+                                    │      Buffer        │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    Continue Capturing
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │ Silence Detection  │
+                                    │      Timer         │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    Silence > Duration
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │ Utterance          │
+                                    │ Finalized          │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │    Whisper STT     │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │ Transcript Segment │
+                                    └─────────┬──────────┘
+                                              │
+                              ┌───────────────┴───────────────┐
+                              │                               │
+                              ▼                               ▼
+                    ┌───────────────────┐           ┌───────────────────┐
+                    │ Hallucination     │           │ Speaker           │
+                    │ Filtering         │           │ Processing        │
+                    └─────────┬─────────┘           └─────────┬─────────┘
+                              │                               │
+                              └───────────────┬───────────────┘
+                                              ▼
+                                    ┌────────────────────┐
+                                    │  Clean Transcript  │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │   Zustand / UI     │
+                                    └─────────┬──────────┘
+                                              │
+                                              ▼
+                                    ┌────────────────────┐
+                                    │   SQLite Storage   │
+                                    └────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         AI PROCESSING PIPELINE                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                              Clean Transcript
+                                      │
+                                      ▼
+                         ┌─────────────────────────┐
+                         │ AI Provider Abstraction │
+                         └────────────┬────────────┘
+                                      │
+              ┌───────────────────────┼────────────────────────┐
+              │            │          │          │             │
+              ▼            ▼          ▼          ▼             ▼
+           OpenAI       Gemini    Anthropic   OpenRouter   Custom Provider
+              │            │          │          │             │
+              └────────────┴──────────┴──────────┴─────────────┘
+                                      │
+                                      ▼
+                           ┌──────────────────────┐
+                           │   AI Response Layer  │
+                           └──────────┬───────────┘
+                                      │
+                     ┌────────────────┼────────────────┐
+                     │                │                │
+                     ▼                ▼                ▼
+                 Summary        Action Items       AI Insights
+                     │                │                │
+                     └────────────────┼────────────────┘
+                                      │
+                                      ▼
+                                 AI Chat
+                                      │
+                                      ▼
+                              SQLite Persistence
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         DATA & SECURITY                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                         ┌──────────────────────┐
+                         │      SQLite DB       │
+                         │                      │
+                         │ • Meetings           │
+                         │ • Transcripts        │
+                         │ • Summaries          │
+                         │ • Action Items       │
+                         │ • Meeting Metadata   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │    Drizzle ORM       │
+                         │                      │
+                         │ Type-safe DB Access  │
+                         └──────────────────────┘
+
+
+                         API Keys / Credentials
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ OS Credential        │
+                         │ Manager              │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         Secure Local Storage
 
 ## Directory structure
 
