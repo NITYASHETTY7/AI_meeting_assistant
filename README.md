@@ -34,9 +34,9 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meetin
                     │                                   │
                     ▼                                   ▼
           ┌───────────────────┐               ┌───────────────────┐
-          │   React Renderer  │               │  Electron Main    │
-          │                   │               │     Process       │
-          │ • Dashboard       │               │                   │
+          │   React Renderer  │  Inter        │  Electron Main    │
+          │                   │  process      │     Process       │
+          │ • Dashboard       │ Communication │                   │
           │ • Meeting UI      │◄───── IPC ───►│ • OS APIs         │
           │ • Live Transcript │               │ • Audio Capture   │
           │ • AI Chat         │               │ • Meeting Detect. │
@@ -66,9 +66,9 @@ An AI-powered desktop meeting assistant for Windows, macOS, and Linux. AI Meetin
                     │
                     │
                     ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           AUDIO PIPELINE                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                           AUDIO PIPELINE                                     │
+    └──────────────────────────────────────────────────────────────────────────────┘
 
        ┌─────────────────────┐             ┌─────────────────────┐
        │  Microphone Input   │             │    System Audio     │
